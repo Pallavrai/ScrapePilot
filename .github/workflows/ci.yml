@@ -1,0 +1,31 @@
+name: Verify
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: scrapepilot
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: scrapepilot
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U scrapepilot" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8.10.1
+        ports: ["56379:6379"]
+    env:
+      DATABASE_URL: postgres://scrapepilot:ci-only-password@localhost:5432/scrapepilot
+      TEST_DATABASE_URL: postgres://scrapepilot:ci-only-password@localhost:5432/scrapepilot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm install -g pnpm@12.4.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm db:migrate
+      - run: pnpm --filter @scrapepilot/scraper-engine exec playwright install --with-deps chromium
+      - run: pnpm test
+      - run: pnpm build

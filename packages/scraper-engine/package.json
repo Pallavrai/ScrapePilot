@@ -1,0 +1,20 @@
+{
+  "name": "@scrapepilot/scraper-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./network": "./src/network.ts",
+    "./artifacts": "./src/artifacts.ts",
+    ".": "./src/index.ts",
+    "./security": "./src/security.ts",
+    "./export": "./src/export.ts"
+  },
+  "dependencies": {
+    "re2js": "2.8.6",
+    "esbuild": "0.28.2",
+    "@scrapepilot/contracts": "workspace:*",
+    "playwright": "1.63.0",
+    "ipaddr.js": "2.2.0"
+  }
+}

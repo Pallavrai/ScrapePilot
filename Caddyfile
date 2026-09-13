@@ -1,0 +1,9 @@
+{$APP_DOMAIN:localhost} {
+  encode zstd gzip
+  handle /browser {
+    reverse_proxy worker:3001
+  }
+  handle {
+    reverse_proxy web:3000
+  }
+}

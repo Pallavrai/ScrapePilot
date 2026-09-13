@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false
+  sharp: true
+minimumReleaseAgeExclude:
+  - resend@6.28.0
