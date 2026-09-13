@@ -19,6 +19,7 @@ export class BlockedError extends Error {}
 export async function locate(
   page: Page | Locator,
   spec: LocatorSpec,
+  wait = true,
 ): Promise<Locator> {
   const scope =
     spec.frame && "frameLocator" in page ? page.frameLocator(spec.frame) : page;
@@ -27,8 +28,17 @@ export async function locate(
     if (await l.count()) return l;
   }
   const pending = scope.locator(spec.primary);
-  await pending.first().waitFor({ state: "attached", timeout: 5000 });
-  return pending;
+  // Pages may render late, but collection items are already rendered: waiting there made runs look stuck.
+  if (wait)
+    try {
+      await pending.first().waitFor({ state: "attached", timeout: 5000 });
+      return pending;
+    } catch (e) {
+      if (!(e instanceof Error) || e.name !== "TimeoutError") throw e;
+    }
+  throw new Error(
+    `No element matches "${spec.primary}"${wait ? " after waiting 5 seconds" : ""}`,
+  );
 }
 export function convert(
   value: string | null,
@@ -77,9 +87,10 @@ export function convert(
 }
 async function extract(scope: Page | Locator, fields: Field[], url: string) {
   const row: Record<string, unknown> = {};
+  const wait = "goto" in scope; // a detail page, not an already-rendered collection item
   for (const field of fields) {
     try {
-      const el = (await locate(scope, field.locator)).first();
+      const el = (await locate(scope, field.locator, wait)).first();
       const value =
         field.source === "attribute"
           ? await el.getAttribute(field.attribute ?? "href")
@@ -88,11 +99,35 @@ async function extract(scope: Page | Locator, fields: Field[], url: string) {
             : await el.textContent();
       row[field.name] = convert(value, field, url);
     } catch (e) {
-      if (field.required) throw e;
+      if (field.required)
+        throw new Error(
+          `Field "${field.name}": ${e instanceof Error ? e.message : String(e)}`,
+        );
       row[field.name] = null;
     }
   }
   return row;
+}
+type CollectionStep = Extract<
+  ScraperDefinitionV1["steps"][number],
+  { type: "extractCollection" }
+>;
+/** First rows of a collection on a live page, keeping per-item errors visible (builder Preview). */
+export async function previewCollection(
+  page: Page,
+  step: CollectionStep,
+  limit = 5,
+) {
+  const items = await locate(page, step.container, false);
+  const total = await items.count(),
+    rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < Math.min(total, limit); i++)
+    rows.push(
+      await extract(items.nth(i), step.fields, page.url()).catch((e) => ({
+        _error: `Item ${i + 1}: ${e instanceof Error ? e.message : String(e)}`,
+      })),
+    );
+  return { total, rows };
 }
 export async function protectContext(
   context: BrowserContext,
@@ -271,16 +306,17 @@ export async function execute(
             break;
           case "extractCollection": {
             const collection = await locate(page, s.container);
-            for (
-              let i = 0;
-              i < (await collection.count()) && rows.length < d.limits.maxRows;
-              i++
-            ) {
+            const count = await collection.count();
+            for (let i = 0; i < count && rows.length < d.limits.maxRows; i++) {
               const row = await extract(
                 collection.nth(i),
                 s.fields,
                 page.url(),
-              );
+              ).catch((e) => {
+                throw new Error(
+                  `Item ${i + 1} of ${count}: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              });
               const key = JSON.stringify(
                 d.deduplicationKey ? row[d.deduplicationKey] : row,
               );

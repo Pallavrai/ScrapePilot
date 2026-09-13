@@ -25,6 +25,7 @@ import {
 import {
   definitionSchema,
   emptyDefinition,
+  explainDefinitionError,
   validateInput,
 } from "@scrapepilot/contracts";
 import {
@@ -311,7 +312,11 @@ async function handle(
               ),
             )
             .limit(1);
-          if (active) throw new HttpError(429, "One active run per account");
+          if (active)
+            throw new HttpError(
+              429,
+              "A run is already in progress for your account. Wait for it to finish or cancel it in Run history.",
+            );
           const [usage] = await tx
             .select({
               ms: sql<number>`coalesce(sum(${usageEvents.durationMs}),0)`,
@@ -366,7 +371,10 @@ async function handle(
           "NX",
         );
         if (!lock)
-          throw new HttpError(429, "An interactive session is already active");
+          throw new HttpError(
+            429,
+            "A browser session is already open for your account, in another tab or still closing. Close it or wait a few seconds, then retry.",
+          );
         try {
           const budgetMs = await db.transaction(async (tx) => {
             await tx.execute(
@@ -829,7 +837,10 @@ async function handle(
       (e.name === "ZodError" ||
         /input|variable|URL|Domain|Private|Invalid/i.test(e.message))
     )
-      return Response.json({ error: e.message }, { status: 400 });
+      return Response.json(
+        { error: explainDefinitionError(e) },
+        { status: 400 },
+      );
     console.error(
       "API request failed",
       e instanceof Error ? e.name : "Unknown error",

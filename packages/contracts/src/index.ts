@@ -172,3 +172,29 @@ export const emptyDefinition = (domain = "example.com"): ScraperDefinitionV1 =>
     inputs: { searchTerm: { type: "text", required: false, default: "" } },
     steps: [{ id: "open", type: "navigate", url: `https://${domain}` }],
   });
+/** Turns schema errors into sentences that name the step and field, e.g. "Step 2, field 1 (name): …". */
+export function explainDefinitionError(error: unknown): string {
+  const issues = (error as { issues?: unknown })?.issues;
+  if ((error as Error)?.name !== "ZodError" || !Array.isArray(issues))
+    return error instanceof Error ? error.message : String(error);
+  return issues
+    .map((issue: { path: PropertyKey[]; code: string; message: string }) => {
+      const [key, step, part, field, ...rest] = issue.path;
+      let where = issue.path.map(String).join(".") || "Definition";
+      if (key === "steps" && typeof step === "number") {
+        where = `Step ${step + 1}`;
+        if (part === "fields" && typeof field === "number")
+          where += `, field ${field + 1}`;
+        const detail = (part === "fields" ? rest : [part, field, ...rest])
+          .filter((p) => p !== undefined)
+          .map(String);
+        if (detail.length) where += ` (${detail.join(".")})`;
+      }
+      const message =
+        part === "fields" && field === undefined && issue.code === "too_small"
+          ? "needs at least one output field"
+          : issue.message;
+      return `${where}: ${message}`;
+    })
+    .join("; ");
+}

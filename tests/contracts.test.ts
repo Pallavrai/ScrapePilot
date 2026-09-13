@@ -50,3 +50,17 @@ describe("workflow contract", () => {
       ),
     ).toThrow());
 });
+import { explainDefinitionError } from "../packages/contracts/src/index";
+it("explains definition errors by step and field", () => {
+  const result = definitionSchema.safeParse({
+    ...emptyDefinition(),
+    steps: [
+      ...emptyDefinition().steps,
+      { id: "cards", type: "extractCollection", container: { primary: ".card" }, fields: [] },
+      { id: "more", type: "extractCollection", container: { primary: ".card" }, fields: [{ name: "1bad", locator: { primary: "h2" } }] },
+    ],
+  });
+  expect(explainDefinitionError(result.error)).toMatch(
+    /^Step 2: needs at least one output field; Step 3, field 1 \(name\): /,
+  );
+});

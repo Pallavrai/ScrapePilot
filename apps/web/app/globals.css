@@ -1230,3 +1230,11 @@ th {
     font-size: 25px;
   }
 }
+.builder-notice.error {
+  color: #a23b2c;
+  background: #fdf3f1;
+}
+.results-panel .alert,
+.modal .alert {
+  margin: 0 0 10px;
+}

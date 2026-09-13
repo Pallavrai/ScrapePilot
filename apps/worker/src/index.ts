@@ -26,8 +26,13 @@ import {
   and,
   sql,
 } from "@scrapepilot/db";
-import { definitionSchema } from "@scrapepilot/contracts";
-import { execute, chromium, protectContext } from "@scrapepilot/scraper-engine";
+import { definitionSchema, explainDefinitionError } from "@scrapepilot/contracts";
+import {
+  execute,
+  chromium,
+  protectContext,
+  previewCollection,
+} from "@scrapepilot/scraper-engine";
 import {
   assertPublicUrl,
   decrypt,
@@ -253,8 +258,15 @@ const worker = new Worker(
           },
         );
       completed.inc({ status: result.status });
-    } catch {
-      throw new Error("Run failed");
+    } catch (e) {
+      app.log.error(
+        {
+          runId: run.id,
+          error: e instanceof Error ? e.message.split("\n")[0] : "Unknown",
+        },
+        "Run failed",
+      );
+      throw e;
     } finally {
       await releaseLease();
       clearInterval(timer);
@@ -265,7 +277,7 @@ const worker = new Worker(
 worker.on("error", (err) =>
   app.log.error({ name: err.name }, "Queue worker error"),
 );
-worker.on("failed", (job) => {
+worker.on("failed", (job, err) => {
   if (!job) return;
   void db
     .transaction(async (tx) => {
@@ -274,7 +286,10 @@ worker.on("failed", (job) => {
         .set({
           status: "failed",
           error: {
-            message: "Worker execution failed. Contact the administrator.",
+            // Lease contention is actionable; other infrastructure errors stay in the worker log.
+            message: err?.message.startsWith("Another browser session or run")
+              ? err.message
+              : "The worker hit an internal error while running this scraper. Details are in the worker log.",
           },
           finishedAt: new Date(),
         })
@@ -314,6 +329,18 @@ worker.on("failed", (job) => {
     })
     .catch(() => app.log.error("Could not persist failed run"));
 });
+// Browsers never survive a worker restart (crash, deploy, tsx watch reload), but their
+// Redis leases would lock users out for up to 16 minutes; release them before serving.
+// ponytail: assumes this process holds every lease (Compose runs one worker); key leases by worker id before scaling out.
+await redis.del("browser-capacity");
+for (const pattern of ["browser-domain:*", "browser-owner:*"]) {
+  let cursor = "0";
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+    if (keys.length) await redis.del(...keys);
+    cursor = next;
+  } while (cursor !== "0");
+}
 await app.register(websocket, { options: { maxPayload: 65536 } });
 app.get("/health", async () => {
   await redis.ping();
@@ -331,14 +358,18 @@ app.get("/browser", { websocket: true }, (socket, req) => {
     token = "",
     mode = "interact",
     container = "",
+    allowedDomains: string[] = [],
     authenticated = false;
   let messages = Promise.resolve();
   let pendingMessages = 0;
   const sessionStarted = Date.now();
   let releaseLease = async () => {};
-  let expiry = setTimeout(() => socket.close(), 900000);
+  let expiry = setTimeout(
+    () => socket.close(1000, "Browser session time limit reached"),
+    900000,
+  );
   const authExpiry = setTimeout(() => {
-    if (!authenticated) socket.close();
+    if (!authenticated) socket.close(1008, "Browser authentication timed out");
   }, 10000);
   const send = (data: unknown) => {
     if (socket.readyState === 1) socket.send(JSON.stringify(data));
@@ -347,7 +378,8 @@ app.get("/browser", { websocket: true }, (socket, req) => {
     clearTimeout(expiry);
     clearTimeout(authExpiry);
     void browser?.close();
-    void releaseLease();
+    // Redis may already be closed during shutdown; an unhandled rejection would crash the worker.
+    void releaseLease().catch(() => {});
     if (ownerId)
       void db
         .insert(usageEvents)
@@ -368,7 +400,7 @@ app.get("/browser", { websocket: true }, (socket, req) => {
         1,
         `browser-owner:${ownerId}`,
         token,
-      );
+      ).catch(() => {});
   });
   socket.on("message", (data: Buffer) => {
     if (pendingMessages >= 100) {
@@ -403,7 +435,10 @@ app.get("/browser", { websocket: true }, (socket, req) => {
               .where(eq(user.id, ownerId));
             if (!actor || actor.suspended) throw new Error("Account suspended");
             clearTimeout(expiry);
-            expiry = setTimeout(() => socket.close(), session.budgetMs);
+            expiry = setTimeout(
+              () => socket.close(1000, "Browser session time limit reached"),
+              session.budgetMs,
+            );
             await db
               .update(usageEvents)
               .set({ kind: "browser-active" })
@@ -411,6 +446,8 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             authenticated = true;
             clearTimeout(authExpiry);
             const definition = definitionSchema.parse(session.definition);
+            allowedDomains = definition.allowedDomains;
+            send({ type: "notice", message: "Starting the browser…" });
             releaseLease = await leaseBrowser(
               redis,
               hash(token),
@@ -450,6 +487,17 @@ app.get("/browser", { websocket: true }, (socket, req) => {
               await context.addCookies(state.cookies ?? []);
             }
             page = await context.newPage();
+            page.on("requestfailed", (request: any) => {
+              if (
+                request.isNavigationRequest() &&
+                request.frame() === page.mainFrame() &&
+                request.failure()?.errorText.includes("BLOCKED_BY_CLIENT")
+              )
+                send({
+                  type: "error",
+                  message: `Blocked opening ${new URL(request.url()).hostname}: this scraper may only open ${allowedDomains.join(", ")}. Add the domain to allowedDomains in Definition if you are authorized to automate it.`,
+                });
+            });
             const cdp = await context.newCDPSession(page);
             cdp.on("Page.screencastFrame", async (event: any) => {
               send({ type: "frame", data: event.data });
@@ -473,7 +521,14 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             if (first?.type === "navigate" && !first.url.includes("{{")) {
               await assertPublicUrl(first.url, definition.allowedDomains);
               await throttle(first.url);
-              await page.goto(first.url, { waitUntil: "domcontentloaded" });
+              await page
+                .goto(first.url, { waitUntil: "domcontentloaded" })
+                .catch((e: Error) =>
+                  send({
+                    type: "error",
+                    message: `Could not open ${first.url}: ${e.message.split("\n")[0]}`,
+                  }),
+                );
             }
             return;
           }
@@ -507,7 +562,13 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             });
           }
           if (msg.type === "navigate") {
-            await assertPublicUrl(msg.url);
+            await assertPublicUrl(msg.url, allowedDomains).catch((e: Error) => {
+              throw new Error(
+                e.message === "Domain is not declared in this scraper"
+                  ? `${new URL(msg.url).hostname} is not an allowed domain for this scraper (allowed: ${allowedDomains.join(", ")}). Add it to allowedDomains in Definition if you are authorized to automate it.`
+                  : e.message,
+              );
+            });
             await throttle(msg.url);
             await page.goto(msg.url, {
               waitUntil: "domcontentloaded",
@@ -518,6 +579,24 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             mode = msg.mode === "select" ? "select" : "interact";
           if (msg.type === "container")
             container = String(msg.selector).slice(0, 1000);
+          if (msg.type === "preview") {
+            const definition = definitionSchema.parse(msg.definition);
+            const collections = definition.steps.filter(
+              (s) => s.type === "extractCollection",
+            );
+            const step =
+              collections.find((s) => s.id === msg.stepId) ?? collections[0];
+            if (step?.type !== "extractCollection")
+              throw new Error(
+                "Add a collection with at least one output field to preview.",
+              );
+            const preview = await previewCollection(page, step).catch(
+              (e: Error) => {
+                throw new Error(`Preview failed: ${e.message.split("\n")[0]}`);
+              },
+            );
+            send({ type: "preview", stepId: step.id, ...preview });
+          }
           if (msg.type === "type") {
             if (typeof msg.text !== "string" || msg.text.length > 4096)
               throw new Error("Text too long");
@@ -540,7 +619,9 @@ app.get("/browser", { websocket: true }, (socket, req) => {
               0,
               Math.max(-1000, Math.min(1000, Number(msg.deltaY) || 0)),
             );
-          if (msg.type === "pointer" || msg.type === "hover") {
+          if (["pointer", "hover", "inspect"].includes(msg.type)) {
+            // Newer input already supersedes this hover; skipping keeps clicks responsive.
+            if (msg.type === "hover" && pendingMessages > 1) return;
             const x = Number(msg.x),
               y = Number(msg.y);
             if (
@@ -552,20 +633,36 @@ app.get("/browser", { websocket: true }, (socket, req) => {
               y > 800
             )
               return;
-            if (mode === "interact") {
+            // "inspect" re-reads a point after the collection changes, whatever the mode.
+            if (mode === "interact" && msg.type !== "inspect") {
               if (msg.type === "pointer") await page.mouse.click(x, y);
             } else {
-              const picked = await inspect(page, x, y, container);
-              if (msg.type === "pointer" && picked)
-                send({ type: "selection", ...picked });
+              const picked = await inspect(
+                page,
+                x,
+                y,
+                container,
+                msg.type === "hover",
+              );
+              if (msg.type === "hover") return;
+              if (picked) send({ type: "selection", via: msg.type, ...picked });
+              else
+                send({
+                  type: "notice",
+                  message:
+                    "Nothing selectable at that point. Click on text, an image or a link.",
+                });
             }
           }
         } catch (e) {
+          // Playwright errors carry multi-line call logs; the first line is the part people can act on.
           send({
             type: "error",
-            message: e instanceof Error ? e.message : "Browser action failed",
+            message:
+              explainDefinitionError(e).split("\n")[0] || "Browser action failed",
           });
-          if (!authenticated || !page) socket.close();
+          if (!authenticated || !page)
+            socket.close(1011, "Browser session could not start");
         }
       })
       .finally(() => {

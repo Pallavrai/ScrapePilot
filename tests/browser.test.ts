@@ -175,3 +175,42 @@ describe("real Chromium execution", () => {
     expect(r.rows[0].title).toBe("New design");
   }, 30000);
 });
+import { chromium, previewCollection } from "../packages/scraper-engine/src/index";
+import { stepSchema } from "../packages/contracts/src/index";
+describe("collection diagnostics", () => {
+  const fields = [
+    { name: "title", locator: { primary: "h2", fallbacks: [] }, source: "text" as const, type: "string" as const, trim: true, required: true },
+    { name: "rating", locator: { primary: ".rating", fallbacks: [] }, source: "text" as const, type: "string" as const, trim: true, required: false },
+  ];
+  it("names the failing item and field without waiting on missing optional fields", async () => {
+    const d = workflow();
+    d.steps = [d.steps[0], { id: "cards", type: "extractCollection", container: { primary: ".product", fallbacks: [] }, fields }];
+    const started = Date.now();
+    const r = await execute(d, { searchTerm: "x" }, {
+      prepareContext: async (c) => {
+        await c.route("https://example.com/**", (route) =>
+          route.fulfill({ contentType: "text/html", body: ["A", "B", "C"].map((t) => `<article class=product><h2>${t}</h2></article>`).join("") + "<article class=product><p>No title</p></article>" }),
+        );
+      },
+    });
+    // Four items lacked the optional rating; each used to wait five seconds.
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(r.status).toBe("partial");
+    expect(r.rows).toHaveLength(3);
+    expect(r.error?.message).toBe('Item 4 of 4: Field "title": No element matches "h2"');
+  }, 30000);
+  it("previews the first items with per-item errors", async () => {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.setContent("<article class=product><h2>A</h2></article><article class=product></article>");
+      const step = stepSchema.parse({ id: "cards", type: "extractCollection", container: { primary: ".product" }, fields });
+      expect(await previewCollection(page, step as any)).toEqual({
+        total: 2,
+        rows: [{ title: "A", rating: null }, { _error: 'Item 2: Field "title": No element matches "h2"' }],
+      });
+    } finally {
+      await browser.close();
+    }
+  }, 30000);
+});

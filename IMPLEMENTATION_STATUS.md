@@ -16,7 +16,8 @@ Updated 2026-09-13. The repository contains a working implementation, but the co
 
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed; production Next.js pages and API routes compile.
-- `TEST_DATABASE_URL=... pnpm test`: 51 tests passed across eight files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium.
+- `TEST_DATABASE_URL=... pnpm test`: 54 tests passed across nine files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-13, after the selection fixes in `CHANGELOG.md`).
+- Visual selection over the actual worker WebSocket against live `www.amazon.in` (2026-09-13, scripted protocol messages rather than UI clicks): suggested product-card collection, title/link/image fields matching 16 of 16 items, version saved, queued run succeeded with 10 JSON rows.
 - Tests include signup verification/reset, tenant separation, API key ownership, immutable versions, idempotency, cancellation, marketplace approval/install, credential handling, URL security, field conversion, portable export, dynamic search/detail extraction, selector fallbacks, HTTP 403 handling, and pagination ending without a next button.
 - All four Drizzle migrations applied to the isolated local test database.
 - Docker worker image built. A non-root container with all capabilities dropped, no-new-privileges, the checked-in seccomp profile and `chromiumSandbox: true` rendered a page successfully.
@@ -24,14 +25,17 @@ Updated 2026-09-13. The repository contains a working implementation, but the co
 
 ## Remaining acceptance work
 
-1. Exercise the complete authenticated visual-builder journey through the actual WebSocket, including recording, preview, two-account template installation and version-2 repair. Existing tests cover pieces, not the complete UI journey.
+1. Exercise the complete authenticated visual-builder journey by clicking through the UI, including recording fill/click steps, preview, two-account template installation and version-2 repair. Select → collection → fields → version → run is verified over the WebSocket by script only.
 2. Expand controlled fixtures for nested frames, infinite scroll, target login/session restoration, duplicate-row health diagnostics, changed row counts, 429/CAPTCHA blocks and delayed SPA pagination. First-level frame selection exists; nested-frame selection is not complete.
 3. Add fault-injection integration coverage for webhook signatures/retries/outbox recovery, worker crashes, quota settlement, DNS rebinding through the running egress proxy and scheduled retention. The outbox implementation has type checking but not this integration coverage yet.
 4. Verify full Docker Compose startup and the production web container after the final source changes; the successful container smoke test covered Chromium startup, not the entire deployment.
 5. Measure two concurrent runs on the intended VPS, including browser memory reserve, queue/stream latency and cancellation. Actual click-driven navigation accounting and adaptive SPA pagination need further acceptance coverage.
 6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
+7. Settle interactive-session usage when the worker restarts: the shutdown handler quits Redis before closing WebSockets, leaving `browser-active` rows charged at the full reservation. Startup lease cleanup assumes a single worker process.
 
 ## Local continuation
+
+`CHANGELOG.md` records each change with its verification and open issues.
 
 The isolated test services are `scrapepilot-test-postgres` at localhost:55432 and `scrapepilot-test-redis` at localhost:56379. Their credentials are test-only; use the test database URL from the session or configure a new database. No production credentials or default login account have been created. Root `.env` variables must be exported for the worker and migration commands.
 

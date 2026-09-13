@@ -27,7 +27,7 @@ Sign up and verify the email sent through Resend. There is no bypass account or 
 
 ## Workflow
 
-Create a scraper using a public URL. Connect the browser worker, switch between Interact and Select, add fill/click/wait steps, select a repeating collection, then select its fields. Collection steps with no fields intentionally fail validation until configured. Drag to reorder. The Definition editor exposes typed inputs, detail fields, pagination, required flags, and fallback locators. Save a version and run with JSON inputs. Runs are asynchronous; inspect Run history for results.
+Create a scraper using a public URL. Connect the browser worker, switch between Interact and Select, and add fill/click/wait steps. In Select, click a value inside a repeating item (for example a product title), name it, and choose Add output field: the builder creates the collection from the repeating item and the inspector shows how many items the field is found in. To use a different container, pick a parent in the inspector and choose Use as collection. Collection steps with no fields intentionally fail validation until configured. Drag to reorder. The Definition editor exposes typed inputs, detail fields, pagination, required flags, and fallback locators. Save a version and run with JSON inputs. Runs are asynchronous; inspect Run history for results.
 
 Use `{{searchTerm}}` for ordinary inputs and `{{secret.password}}` for stored secrets. Credentials are domain-bound and tenant-bound. Export bundles the engine into a portable TypeScript/ESM entrypoint; install the exact Playwright release indicated in its header and provide inputs through environment variables.
 
