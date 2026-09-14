@@ -2,6 +2,75 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (later) — Sign-in, sign-up and password reset forms
+
+Reported: validation and behavior of sign-in and account creation were not up to standard.
+
+### Causes found
+
+- The dialog shared the page's error state, so it could open with "Please sign in" already in its error slot. Error text had no styles.
+- There was no pending state: double clicks sent several sign-up requests (an earlier log shows three sign-ups and two 429 responses). Network failures were not caught.
+- Validation came only from browser bubbles. Fields used placeholders instead of labels and had no autocomplete hints, no password confirmation and no show-password.
+- Better Auth messages appeared raw, and there was no way to resend a verification email. After sign-up the form stayed in sign-up mode. Verification and reset links landed on pages without any message, and expired reset links were not handled.
+- Names were only checked in the browser; the auth API accepted blank or very long names.
+
+### Changed
+
+- `apps/web/components/auth-dialog.tsx` (new): the sign-in/sign-up dialog.
+  - Labeled fields with inline validation on blur and submit: name 1–80 characters, email format, password 12–128 characters, and password confirmation. Focus moves to the first invalid field.
+  - Show/hide password and autocomplete hints. Only one request runs at a time, with a progress label.
+  - Specific messages for Better Auth error codes, rate limits and network failures. Unverified accounts get **Send a new verification link**; existing accounts get **Sign in instead**. Escape closes the dialog.
+  - Sign-up answers the same way for new and existing emails, then returns to sign-in with the email kept.
+- `apps/web/components/workspace.tsx`: uses the dialog, and opens it with a message for `?verified=1`, failed verification links and `?signin=1`, then removes the query string.
+- `apps/web/app/reset-password/page.tsx`: the same fields and messages, plus a confirmation field. `?error=INVALID_TOKEN` and rejected tokens return to the request form, and a success links to sign in.
+- `apps/web/lib/auth.ts`: `databaseHooks.user.create.before` trims names and rejects blank names or names over 80 characters.
+- `apps/web/app/globals.css`: field, error, message and link styles.
+- Local `.claude/launch.json` (untracked): the preview attaches to `http://localhost:3000` with `autoPort: false`, because the preview launcher cannot read `~/Desktop` on this Mac. Start the web app with `.env` loaded first.
+
+### Verified locally
+
+- `pnpm typecheck` and `pnpm build` passed. `TEST_DATABASE_URL=… pnpm test`: 59 tests passed in 9 files. The new auth integration test rejects blank and 81-character names and stores trimmed names.
+- Forms driven in Chromium against the running app: 27 of 27 checks.
+  - Empty and invalid input is explained without a request, and focus moves to the first invalid field. Show password works.
+  - Sign-in errors are explained: wrong password, unverified account (with resend), rate limit and network failure. Escape closes the dialog.
+  - Sign-up: validation messages; a double submit sends one request and shows a progress label; the name is trimmed; the form returns to sign-in; an existing account gets its own message.
+  - A real sign-in loads the workspace.
+  - Email links: verification success and failure messages; reset request; expired and rejected reset tokens; signing in after a reset.
+  - Endpoints that send email (sign-up, resend, reset request, reset) were mocked. Wrong-password, unverified and successful sign-ins used real temporary `@example.test` accounts, deleted afterwards.
+- Post-reset layout: the Sign in button fills the width, with 16 px before the next link.
+
+### Not verified / known issues
+
+- Real email delivery for sign-up, resend and reset was not exercised in this pass.
+- The dialog does not trap keyboard focus inside itself.
+- Only Chromium was driven.
+
+## 2026-09-14 — Pagination and detail pages in the editor, restart usage
+
+### Changed
+
+- **Worker restarts no longer charge the full browser reservation** (`apps/worker/src/index.ts`). Each browser session's cleanup (usage row, Redis leases, Chromium) now runs exactly once, whether the socket closes or the worker shuts down. Shutdown settles open sessions before closing Redis and PostgreSQL. Previously Redis quit before the WebSockets closed, so sessions stayed `browser-active` at the full 15-minute reservation. On startup, sessions a crash left `browser-active` are charged the time since they started, capped at the reservation.
+- **Scrolling the remote browser also scrolled the editor** (`apps/web/components/builder.tsx`). The wheel listener on the browser view is now non-passive and prevents the page from scrolling.
+- **Output field rows** (`apps/web/app/globals.css`): name, type and remove button now sit on one row.
+
+### Verified locally
+
+- `pnpm typecheck` and `pnpm build` passed. `TEST_DATABASE_URL=… pnpm test`: 58 tests passed in 9 files.
+- Builder UI in Chromium on `books.toscrape.com`, with a temporary `@example.test` account deleted afterwards: 11 of 11 checks.
+  - Selected the next-page link after scrolling the remote page, then **Use selection as Next**.
+  - Set `maxPages` to 2 in the Definition dialog. The run followed the next link and returned 40 unique rows from 2 pages.
+  - **Follow detail links**, then added a field from an opened product page. A run with `maxRows` 3 opened each detail page and returned availability for all 3 rows.
+  - The wheel over the browser view did not scroll the editor. No page errors.
+- Restart checks with a real browser session. A graceful `tsx watch` reload settled usage at 4.9 seconds with no leases left. After a SIGKILL and a new start, usage settled at 13.8 seconds with no leases left.
+- Pagination and detail pages needed no engine changes; the existing behavior held up in these runs.
+
+### Not verified / known issues
+
+- Not exercised in the UI: infinite scroll, recording and replaying Fill/Click steps, template installation across two accounts, and version-2 repair.
+- `tsx watch` does not restart a worker that was killed from outside; run `pnpm worker` again.
+- Startup lease cleanup and crash usage settlement assume a single worker process.
+- Still open: Safari and Firefox are untested; Preview reads only the page that is open.
+
 ## 2026-09-13 (later) — Visual editor bug sweep
 
 Reported: runs still produced no output, many buttons appeared not to work, errors were silent and failures were hard to understand.

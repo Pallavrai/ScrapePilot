@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db, user, session, account, verification } from "@scrapepilot/db";
 import { Resend } from "resend";
@@ -32,6 +33,21 @@ function createAuth() {
       sendOnSignUp: true,
       sendVerificationEmail: async ({ user, url }) =>
         send(user.email, "Verify your ScrapePilot account", url),
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // The sign-up form checks the name too, but the auth API is public.
+          before: async (created) => {
+            const name = String(created.name ?? "").trim();
+            if (!name || name.length > 80)
+              throw new APIError("BAD_REQUEST", {
+                message: "Enter a name of 1 to 80 characters.",
+              });
+            return { data: { ...created, name } };
+          },
+        },
+      },
     },
     rateLimit: { enabled: true },
     user: {

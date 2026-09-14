@@ -16,8 +16,11 @@ Updated 2026-09-13. The repository contains a working implementation, but the co
 
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed; production Next.js pages and API routes compile.
-- `TEST_DATABASE_URL=... pnpm test`: 58 tests passed across nine files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-13, after the visual editor fixes in `CHANGELOG.md`).
+- `TEST_DATABASE_URL=... pnpm test`: 59 tests passed across nine files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`).
 - Builder UI clicked through in Chromium against the running web app and worker (2026-09-13): `books.toscrape.com` 18 of 18 checks (error handling, automatic collection, Preview, Run with 20 rows, reconnect and disconnect); live `www.amazon.in` search 7 of 7 (collection 16 of 16, Preview, Run with 16 rows). Chromium only.
+- Next-page pagination and detail pages through the builder UI on `books.toscrape.com` (2026-09-14): 11 of 11 checks; a run followed the next link for 40 rows from 2 pages, and a run opened each item's detail page for 3 rows with availability.
+- Worker restart with an open browser session (2026-09-14): a graceful reload settled usage at 4.9 s and a SIGKILL followed by a new start settled it at 13.8 s, with no leases left in either case.
+- Sign-in, sign-up and password reset forms in Chromium (2026-09-14): 27 of 27 checks covering client validation, Better Auth error codes, rate-limit and network messages, double-submit protection, and verification and reset link outcomes. Email-sending endpoints were mocked; sign-in used real temporary accounts.
 - Tests include signup verification/reset, tenant separation, API key ownership, immutable versions, idempotency, cancellation, marketplace approval/install, credential handling, URL security, field conversion, portable export, dynamic search/detail extraction, selector fallbacks, HTTP 403 handling, and pagination ending without a next button.
 - All four Drizzle migrations applied to the isolated local test database.
 - Docker worker image built. A non-root container with all capabilities dropped, no-new-privileges, the checked-in seccomp profile and `chromiumSandbox: true` rendered a page successfully.
@@ -25,13 +28,13 @@ Updated 2026-09-13. The repository contains a working implementation, but the co
 
 ## Remaining acceptance work
 
-1. Complete the visual-builder journey in the UI: select → collection → fields → Preview → Run is verified by clicking through Chromium, but recording and replaying fill/click steps, pagination and detail pages, two-account template installation, version-2 repair, and Safari/Firefox are not.
+1. Complete the visual-builder journey in the UI: select → collection → fields → Preview → Run, next-page pagination and detail pages are verified by clicking through Chromium, but recording and replaying fill/click steps, infinite scroll, two-account template installation, version-2 repair, and Safari/Firefox are not.
 2. Expand controlled fixtures for nested frames, infinite scroll, target login/session restoration, duplicate-row health diagnostics, changed row counts, 429/CAPTCHA blocks and delayed SPA pagination. First-level frame selection exists; nested-frame selection is not complete.
 3. Add fault-injection integration coverage for webhook signatures/retries/outbox recovery, worker crashes, quota settlement, DNS rebinding through the running egress proxy and scheduled retention. The outbox implementation has type checking but not this integration coverage yet.
 4. Verify full Docker Compose startup and the production web container after the final source changes; the successful container smoke test covered Chromium startup, not the entire deployment.
 5. Measure two concurrent runs on the intended VPS, including browser memory reserve, queue/stream latency and cancellation. Actual click-driven navigation accounting and adaptive SPA pagination need further acceptance coverage.
 6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
-7. Settle interactive-session usage when the worker restarts: the shutdown handler quits Redis before closing WebSockets, leaving `browser-active` rows charged at the full reservation. Startup lease cleanup assumes a single worker process.
+7. Startup lease cleanup and crash usage settlement assume a single worker process; key leases by worker id before running more than one. A crashed session is charged until the worker starts again, capped at its reservation.
 
 ## Local continuation
 

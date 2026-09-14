@@ -74,6 +74,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
         ).token,
       ).toBeTruthy();
     });
+    it("rejects blank or overlong names and stores trimmed names", async () => {
+      for (const name of ["   ", "x".repeat(81)])
+        await expect(
+          auth.api.signUpEmail({
+            body: { name, email: `name-${randomUUID()}@example.test`, password },
+          }),
+        ).rejects.toThrow("Enter a name of 1 to 80 characters.");
+      const created = await auth.api.signUpEmail({
+        body: {
+          name: "  Ada Lovelace  ",
+          email: `trim-${randomUUID()}@example.test`,
+          password,
+        },
+      });
+      expect(created.user.name).toBe("Ada Lovelace");
+    });
     afterAll(async () => {
       await db?.client.end();
     });

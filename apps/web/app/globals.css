@@ -1238,3 +1238,93 @@ th {
 .modal .alert {
   margin: 0 0 10px;
 }
+.field-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.field-list > div button {
+  padding: 2px 9px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.field input[aria-invalid="true"] {
+  border-color: #d4574b;
+}
+.field-error,
+.field-hint {
+  font-weight: 400;
+}
+.field-error {
+  color: #b3392d;
+}
+.field-hint {
+  color: var(--muted);
+}
+.password-input {
+  display: flex;
+}
+.password-input input {
+  flex: 1;
+  border-radius: 6px 0 0 6px;
+}
+.password-input button {
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  padding: 0 11px;
+}
+.form-message {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.form-message.error {
+  background: #fdf3f1;
+  color: #a23b2c;
+  border: 1px solid #f3d6d1;
+}
+.form-message.success {
+  background: #f2faf6;
+  color: #2f6f58;
+  border: 1px solid #dbece3;
+}
+.link-button,
+.link-button:hover {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--purple);
+  font-weight: 500;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.form-message .link-button {
+  display: block;
+  margin-top: 6px;
+}
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.auth-links {
+  margin-top: 16px;
+}
+.modal > a.primary {
+  display: flex;
+  width: 100%;
+}

@@ -223,6 +223,20 @@ export default function Builder({
       clearInterval(timer);
     };
   }, [runId]);
+  const loaded = d !== null;
+  useEffect(() => {
+    const c = canvas.current;
+    if (!c) return;
+    // Wheel over the remote browser scrolls that page, not the editor; React wheel listeners are passive.
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      lastPoint.current = null;
+      if (socket.current?.readyState === WebSocket.OPEN)
+        socket.current.send(JSON.stringify({ type: "scroll", deltaY: e.deltaY }));
+    };
+    c.addEventListener("wheel", onWheel, { passive: false });
+    return () => c.removeEventListener("wheel", onWheel);
+  }, [loaded]);
   // Quiet sends are background syncs (mode, collection) that should not nag before a browser is connected.
   function send(payload: unknown, quiet = false) {
     if (socket.current?.readyState === WebSocket.OPEN) {
@@ -1026,10 +1040,6 @@ export default function Builder({
                   return;
                 lastHover.current = e.timeStamp;
                 send({ type: "hover", ...pointFrom(e) }, true);
-              }}
-              onWheel={(e) => {
-                lastPoint.current = null;
-                send({ type: "scroll", deltaY: e.deltaY }, true);
               }}
               onKeyDown={(e) => {
                 if (

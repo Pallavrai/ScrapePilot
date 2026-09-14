@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Plus,
   ArrowUpRight,
-  Command,
   ChevronRight,
   Activity,
   Box,
@@ -18,14 +17,13 @@ import {
   Lock,
   Workflow,
 } from "lucide-react";
-import { createAuthClient } from "better-auth/react";
 import { Badge, EmptyState } from "@scrapepilot/ui";
+import AuthDialog, { authClient, type FormNotice } from "./auth-dialog";
 const Builder = dynamic(() => import("./builder"), {
   ssr: false,
   loading: () => <div className="empty">Opening editor…</div>,
 });
 const Settings = dynamic(() => import("./settings"), { ssr: false });
-const auth = createAuthClient();
 export async function api(path: string, method = "GET", body?: unknown) {
   const r = await fetch(`/api/v1/${path}`, {
     method,
@@ -44,9 +42,13 @@ export default function Workspace() {
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [loading, setLoading] = useState(true),
-    [login, setLogin] = useState(false),
-    [signup, setSignup] = useState(false),
+    [authDialog, setAuthDialog] = useState<{
+      mode: "signin" | "signup";
+      notice?: FormNotice;
+    } | null>(null),
     [query, setQuery] = useState("");
+  const setLogin = (open: boolean) =>
+    setAuthDialog(open ? { mode: "signin" } : null);
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -62,6 +64,27 @@ export default function Workspace() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    // Verification and password-reset emails land here with their outcome in the query string.
+    const params = new URLSearchParams(location.search);
+    const failed = params.get("error") || params.get("verified")?.includes("error");
+    const notice: FormNotice | null = failed
+      ? {
+          tone: "error",
+          text: "That verification link is invalid or has expired. Sign in to send a new one.",
+        }
+      : params.get("verified")
+        ? { tone: "success", text: "Email verified. Sign in to continue." }
+        : params.get("signin")
+          ? {
+              tone: "success",
+              text: "Password updated. Sign in with your new password.",
+            }
+          : null;
+    if (!notice) return;
+    setAuthDialog({ mode: "signin", notice });
+    history.replaceState(null, "", location.pathname);
+  }, []);
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -74,25 +97,6 @@ export default function Workspace() {
       setNotice("");
     } catch (e) {
       setError((e as Error).message);
-    }
-  }
-  async function sign(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget),
-      data = {
-        email: String(f.get("email")),
-        password: String(f.get("password")),
-        name: String(f.get("name") ?? ""),
-      };
-    const r = signup
-      ? await auth.signUp.email(data)
-      : await auth.signIn.email(data);
-    if (r.error) setError(r.error.message ?? "Authentication failed");
-    else if (signup)
-      setNotice("Check your inbox to verify your email before signing in.");
-    else {
-      setLogin(false);
-      await refresh();
     }
   }
   const nav = [
@@ -182,7 +186,7 @@ export default function Workspace() {
             className="profile"
             onClick={() =>
               actor
-                ? auth.signOut().then(() => {
+                ? authClient.signOut().then(() => {
                     setActor(null);
                     setItems([]);
                   })
@@ -672,46 +676,16 @@ export default function Workspace() {
           </div>
         )}
       </main>
-      {login && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <button className="close" onClick={() => setLogin(false)}>
-              ×
-            </button>
-            <span className="brand-icon">
-              <Command />
-            </span>
-            <h2>{signup ? "Create your workspace" : "Welcome back"}</h2>
-            <p>Make the web work for you.</p>
-            <form onSubmit={sign}>
-              {signup && <input name="name" placeholder="Full name" required />}
-              <input
-                name="email"
-                type="email"
-                placeholder="Email address"
-                required
-              />
-              <input
-                name="password"
-                type="password"
-                minLength={12}
-                placeholder="Password (12+ characters)"
-                required
-              />
-              <button className="primary">
-                {signup ? "Create account" : "Sign in"}
-              </button>
-            </form>
-            <a href="/reset-password">Forgot password?</a>
-            <p className="error">{error}</p>
-            <p>{notice}</p>
-            <button onClick={() => setSignup(!signup)}>
-              {signup
-                ? "Already have an account? Sign in"
-                : "New here? Create an account"}
-            </button>
-          </div>
-        </div>
+      {authDialog && (
+        <AuthDialog
+          initialMode={authDialog.mode}
+          initialNotice={authDialog.notice}
+          onClose={() => setAuthDialog(null)}
+          onSignedIn={async () => {
+            setAuthDialog(null);
+            await refresh();
+          }}
+        />
       )}
     </div>
   );

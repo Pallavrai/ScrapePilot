@@ -341,6 +341,13 @@ for (const pattern of ["browser-domain:*", "browser-owner:*"]) {
     cursor = next;
   } while (cursor !== "0");
 }
+// Sessions still marked active died with the previous process (a crash skips shutdown);
+// charge at most the time since each started instead of the whole reservation.
+await db.execute(
+  sql`update usage_events set kind='browser', duration_ms=least(duration_ms, (extract(epoch from now()-created_at)*1000)::int) where kind='browser-active'`,
+);
+// Cleanups of open browser sessions, so shutdown can settle them while Redis and PostgreSQL are connected.
+const sessionCleanups = new Set<() => Promise<unknown>>();
 await app.register(websocket, { options: { maxPayload: 65536 } });
 app.get("/health", async () => {
   await redis.ping();
@@ -374,33 +381,38 @@ app.get("/browser", { websocket: true }, (socket, req) => {
   const send = (data: unknown) => {
     if (socket.readyState === 1) socket.send(JSON.stringify(data));
   };
+  // Record usage and release leases exactly once: when the socket closes or the worker shuts down.
+  let settled: Promise<unknown> | undefined;
+  const settle = (): Promise<unknown> =>
+    (settled ??= Promise.allSettled([
+      browser?.close(),
+      releaseLease(),
+      ownerId &&
+        db
+          .insert(usageEvents)
+          .values({
+            id: hash(token),
+            ownerId,
+            kind: "browser",
+            durationMs: Date.now() - sessionStarted,
+          })
+          .onConflictDoUpdate({
+            target: usageEvents.id,
+            set: { kind: "browser", durationMs: Date.now() - sessionStarted },
+          }),
+      ownerId &&
+        redis.eval(
+          "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+          1,
+          `browser-owner:${ownerId}`,
+          token,
+        ),
+    ]).finally(() => sessionCleanups.delete(settle)));
+  sessionCleanups.add(settle);
   socket.on("close", () => {
     clearTimeout(expiry);
     clearTimeout(authExpiry);
-    void browser?.close();
-    // Redis may already be closed during shutdown; an unhandled rejection would crash the worker.
-    void releaseLease().catch(() => {});
-    if (ownerId)
-      void db
-        .insert(usageEvents)
-        .values({
-          id: hash(token),
-          ownerId,
-          kind: "browser",
-          durationMs: Date.now() - sessionStarted,
-        })
-        .onConflictDoUpdate({
-          target: usageEvents.id,
-          set: { kind: "browser", durationMs: Date.now() - sessionStarted },
-        })
-        .catch(() => {});
-    if (ownerId)
-      void redis.eval(
-        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-        1,
-        `browser-owner:${ownerId}`,
-        token,
-      ).catch(() => {});
+    void settle();
   });
   socket.on("message", (data: Buffer) => {
     if (pendingMessages >= 100) {
@@ -734,11 +746,13 @@ for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, async () => {
     clearInterval(reconcile);
     clearInterval(cleanup);
+    // Settle open browser sessions first: recording usage and releasing leases need Redis and PostgreSQL.
+    await Promise.allSettled([...sessionCleanups].map((settle) => settle()));
+    await app.close();
     await worker.close();
     await queue.close();
     await deliveryQueue.close();
     await redis.quit();
-    await app.close();
     await client.end();
     process.exit(0);
   });
