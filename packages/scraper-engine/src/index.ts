@@ -16,13 +16,20 @@ import { assertPublicUrl, redact } from "./security";
 import { RE2JS } from "re2js";
 export { chromium };
 export class BlockedError extends Error {}
+/** Where a locator lives: the page, or an iframe reached through one or more nested frames. */
+function frameScope(root: Page | Locator, frame: LocatorSpec["frame"]) {
+  return (typeof frame === "string" ? [frame] : (frame ?? [])).reduce(
+    (scope: Page | Locator | ReturnType<Page["frameLocator"]>, selector) =>
+      scope.frameLocator(selector),
+    root,
+  );
+}
 export async function locate(
   page: Page | Locator,
   spec: LocatorSpec,
   wait = true,
 ): Promise<Locator> {
-  const scope =
-    spec.frame && "frameLocator" in page ? page.frameLocator(spec.frame) : page;
+  const scope = frameScope(page, spec.frame);
   for (const selector of [spec.primary, ...spec.fallbacks]) {
     const l = scope.locator(selector);
     if (await l.count()) return l;
@@ -316,7 +323,7 @@ export async function execute(
             break;
           case "waitFor": {
             // Late content is the reason for this step, so it may wait longer than locate's 5 seconds.
-            const scope = s.locator.frame ? page.frameLocator(s.locator.frame) : page;
+            const scope = frameScope(page, s.locator.frame);
             const target = [s.locator.primary, ...s.locator.fallbacks]
               .map((selector) => scope.locator(selector))
               .reduce((all, next) => all.or(next));
@@ -379,6 +386,16 @@ export async function execute(
       }
     };
     await processSteps();
+    const collectionStep = d.steps.find((s) => s.type === "extractCollection");
+    // The listed items' text, to notice when a next page has replaced them.
+    const listed = async () =>
+      collectionStep?.type === "extractCollection"
+        ? (
+            await locate(page, collectionStep.container, false)
+              .then((items) => items.allInnerTexts())
+              .catch(() => [])
+          ).join("\n")
+        : null;
     if (pagination?.type === "paginate")
       for (
         let n = 1;
@@ -388,7 +405,7 @@ export async function execute(
         const before = rows.length;
         if (pagination.mode === "next") {
           const spec = pagination.next!;
-          const scope = spec.frame ? page.frameLocator(spec.frame) : page;
+          const scope = frameScope(page, spec.frame);
           let next = scope.locator(spec.primary);
           for (const selector of [spec.primary, ...spec.fallbacks]) {
             const candidate = scope.locator(selector);
@@ -404,7 +421,12 @@ export async function execute(
             break;
           await options.beforeNavigation?.(page.url());
           if (++pages > d.limits.maxPages) break;
+          const shown = await listed();
           await next.first().click();
+          // Single-page apps replace the results without navigating: wait up to 10 seconds for them to change.
+          if (shown !== null)
+            for (const end = Date.now() + 10000; Date.now() < end && (await listed()) === shown; )
+              await page.waitForTimeout(250);
           await page.waitForLoadState("domcontentloaded");
         } else {
           const collection = d.steps.find((s) => s.type === "extractCollection");

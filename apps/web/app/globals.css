@@ -718,21 +718,16 @@ th {
 .list-row button {
   margin-left: auto;
 }
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
+/* Modals are native <dialog> elements opened with showModal(); the browser centres them. */
+.modal::backdrop {
   background: #211d3555;
   backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 25px;
 }
 .modal {
-  position: relative;
   width: 420px;
+  color: inherit;
   background: white;
+  border: 0;
   padding: 32px;
   border-radius: 15px;
   box-shadow: 0 30px 80px #18112c33;
@@ -1449,8 +1444,8 @@ th {
 }
 /* Tall dialogs (template diff, definitions) scroll inside the viewport so their buttons stay reachable. */
 .modal {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 50px);
   overflow: auto;
 }
 .diff-grid {

@@ -78,6 +78,111 @@ describe("real Chromium execution", () => {
     expect(r.status).toBe("succeeded");
     expect(r.rows.map((row) => row.title)).toEqual(["Product 1", "Product 2"]);
   }, 30000);
+  it("removes duplicate rows across pages, by whole row or by the deduplication key", async () => {
+    const product = (title: string, path: string) =>
+      `<article class=product><h2>${title}</h2><span class=price>$10</span><a href=${path}>Details</a></article>`;
+    const run = (deduplicationKey?: string) => {
+      const d = workflow();
+      d.steps = d.steps.filter((s) => ["open", "cards"].includes(s.id));
+      d.steps.push({
+        id: "pages",
+        type: "paginate",
+        mode: "next",
+        next: { primary: ".next", fallbacks: [] },
+        maxPages: 3,
+      });
+      d.deduplicationKey = deduplicationKey;
+      return execute(
+        d,
+        { searchTerm: "test" },
+        {
+          prepareContext: async (c) => {
+            await c.route("https://example.com/**", (route) =>
+              route.fulfill({
+                contentType: "text/html",
+                body: route.request().url().includes("page=2")
+                  ? product("Product B", "/product/b") +
+                    product("Product B, renamed", "/product/b") +
+                    product("Product C", "/product/c")
+                  : product("Product A", "/product/a") +
+                    product("Product B", "/product/b") +
+                    '<a class=next href="/?page=2">Next</a>',
+              }),
+            );
+          },
+        },
+      );
+    };
+    expect((await run()).rows.map((row) => row.title)).toEqual([
+      "Product A",
+      "Product B",
+      "Product B, renamed",
+      "Product C",
+    ]);
+    expect((await run("url")).rows.map((row) => row.title)).toEqual([
+      "Product A",
+      "Product B",
+      "Product C",
+    ]);
+  }, 60000);
+  it("follows single-page-app pagination that swaps results after a delay", async () => {
+    const d = workflow();
+    d.steps = d.steps.filter((s) => ["open", "cards"].includes(s.id));
+    d.steps.push({
+      id: "pages",
+      type: "paginate",
+      mode: "next",
+      next: { primary: ".next", fallbacks: [] },
+      maxPages: 3,
+    });
+    // Next does not navigate: it replaces the list 1.5 seconds later and disappears on the last page.
+    const page2 = `<article class=product><h2>Product 2</h2><span class=price>$20</span><a href=/product/2>Details</a></article>`;
+    const r = await execute(
+      d,
+      { searchTerm: "test" },
+      {
+        prepareContext: async (c) => {
+          await c.route("https://example.com/**", (route) =>
+            route.fulfill({
+              contentType: "text/html",
+              body: `<div id=list><article class=product><h2>Product 1</h2><span class=price>$10</span><a href=/product/1>Details</a></article></div><button class=next onclick='const next=this;next.disabled=true;setTimeout(()=>{document.querySelector("#list").innerHTML=${JSON.stringify(page2)};next.remove()},1500)'>Next</button>`,
+            }),
+          );
+        },
+      },
+    );
+    expect(r.status).toBe("succeeded");
+    expect(r.rows.map((row) => row.title)).toEqual(["Product 1", "Product 2"]);
+  }, 30000);
+  it("collects items two iframes deep through a frame chain", async () => {
+    const d = workflow();
+    d.steps = d.steps.filter((s) => ["open", "cards"].includes(s.id));
+    const cards = d.steps.find((s) => s.id === "cards");
+    if (cards?.type === "extractCollection")
+      cards.container.frame = ["#outer", "#inner"];
+    // Each srcdoc level escapes the HTML of the level inside it.
+    const items = `<article class="product"><h2>Framed 1</h2><span class="price">$10</span><a href="/product/1">Details</a></article><article class="product"><h2>Framed 2</h2><span class="price">$20</span><a href="/product/2">Details</a></article>`;
+    const middle = `<iframe id="inner" srcdoc="${items.replaceAll('"', "&quot;")}"></iframe>`;
+    const r = await execute(
+      d,
+      { searchTerm: "test" },
+      {
+        prepareContext: async (c) => {
+          await c.route("https://example.com/**", (route) =>
+            route.fulfill({
+              contentType: "text/html",
+              body: `<iframe id="outer" srcdoc="${middle.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></iframe>`,
+            }),
+          );
+        },
+      },
+    );
+    expect(r.status).toBe("succeeded");
+    expect(r.rows).toMatchObject([
+      { title: "Framed 1", price: 10, url: "https://example.com/product/1" },
+      { title: "Framed 2", price: 20, url: "https://example.com/product/2" },
+    ]);
+  }, 30000);
   it("searches dynamic results and follows detail links", async () => {
     const result = await execute(
       workflow(),
@@ -122,6 +227,33 @@ describe("real Chromium execution", () => {
       },
     );
     expect(r.status).toBe("blocked");
+    expect(requests).toBe(1);
+  }, 30000);
+  it.each([
+    ["an HTTP 429 response", { status: 429, body: "Slow down" }, "Target returned HTTP 429"],
+    [
+      "a CAPTCHA page",
+      { status: 200, contentType: "text/html", body: '<div class="g-recaptcha captcha-box"></div>' },
+      "Target requires CAPTCHA verification",
+    ],
+  ])("marks %s blocked without retrying", async (_label, response, message) => {
+    let requests = 0;
+    const d = workflow();
+    d.steps = d.steps.slice(0, 1);
+    const r = await execute(
+      d,
+      { searchTerm: "nerf gun" },
+      {
+        prepareContext: async (c) => {
+          await c.route("https://example.com/**", (route) => {
+            requests++;
+            return route.fulfill(response);
+          });
+        },
+      },
+    );
+    expect(r.status).toBe("blocked");
+    expect(r.error?.message).toBe(message);
     expect(requests).toBe(1);
   }, 30000);
   it("cancels an active browser", async () => {

@@ -32,7 +32,11 @@ import {
   and,
   sql,
 } from "@scrapepilot/db";
-import { definitionSchema, explainDefinitionError } from "@scrapepilot/contracts";
+import {
+  definitionSchema,
+  explainDefinitionError,
+  locatorSchema,
+} from "@scrapepilot/contracts";
 import {
   execute,
   chromium,
@@ -635,7 +639,7 @@ app.get("/browser", { websocket: true }, (socket, req) => {
                 await locate(page, {
                   primary: step.locator.primary.slice(0, 1000),
                   fallbacks: [],
-                  frame: typeof step.locator.frame === "string" ? step.locator.frame : undefined,
+                  frame: locatorSchema.shape.frame.safeParse(step.locator.frame).data,
                 })
               ).first();
               const value = String(step.value ?? "").slice(0, 4096);

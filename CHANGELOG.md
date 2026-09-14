@@ -2,6 +2,80 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (overnight) — Single-page-app pagination, blocks and duplicates
+
+### Causes found
+
+- **Single-page-app pagination stopped after page 1:** after clicking Next, the engine waited only for `domcontentloaded`. A page that swaps its results in place has already reached that. The engine read the old results again, found only duplicates and ended pagination, so sites that fetch the next page instead of navigating returned only their first page.
+- **Untested behavior:** there were no tests for HTTP 429 or CAPTCHA pages, or for removing duplicate rows.
+
+### Changed
+
+- `packages/scraper-engine/src/index.ts`:
+  - Before clicking Next, the engine records the listed items' text; afterwards it waits up to 10 seconds for that text to change, then for the page to finish loading.
+  - Pages that navigate behave as before. When nothing changes, pagination still ends, after the wait.
+- `tests/browser.test.ts`:
+  - HTTP 429 and a CAPTCHA page end as blocked, with a clear message and a single request.
+  - Duplicate rows across pages are removed, by whole row or by `deduplicationKey`.
+  - Pagination that replaces the results 1.5 seconds after Next collects both pages.
+
+### Verified
+
+- Before the fix, the new pagination test returned only "Product 1"; after it, both pages.
+- `pnpm typecheck` passed. All 14 browser tests pass, including the existing next-page tests with real navigation.
+- `TEST_DATABASE_URL=… pnpm test` passed 88 of 88. The UI check of next-page pagination and detail pages on books.toscrape.com passed 11 of 11.
+
+### Still unverified
+
+- Single-page-app pagination on live sites, and next pages that take longer than 10 seconds to appear.
+- Runs report nothing about skipped duplicate rows or a row count far below earlier runs; those diagnostics do not exist.
+
+## 2026-09-14 (late night) — Dialog focus, nested frames and test cleanup
+
+### Causes found
+
+- **Dialogs:**
+  - Keyboard focus stayed on the page behind a dialog, and Tab moved through that page. Screen readers could still reach it.
+  - Only three of eight dialogs closed with Escape.
+  - The template update and definition dialogs had no dialog role or label.
+- **Nested frames:** the picker looked only one iframe deep, and a locator could name only one frame. Content inside nested iframes could not be selected or extracted, and there were no frame tests at all.
+- **Test data:** the API and authentication integration suites left their users and data in the database after every run. 64 `@example.test` users had accumulated.
+
+### Changed
+
+- `apps/web/components/modal.tsx` (new):
+  - Dialogs are native `<dialog>` elements opened with `showModal()`, so the browser keeps focus inside and makes the page behind inert.
+  - A dialog opens on its first form field, Escape closes it where closing is allowed, and focus returns to the control that opened it.
+  - All eight dialogs use it: sign-in, password reset, the error screen (as an alert dialog), key reveal, run results, template report, template update and definition editing. The per-dialog Escape handlers are removed.
+- `apps/web/app/globals.css`: `::backdrop` replaces the backdrop wrapper, and dialogs keep a margin at the viewport edges.
+- `packages/contracts/src/index.ts`: a locator's `frame` is either one iframe selector or a chain of up to five, from the page inwards. Existing definitions stay valid.
+- `apps/worker/src/selection.ts`: the picker descends through nested iframes under the pointer and records the chain.
+- `packages/scraper-engine/src/index.ts`: one helper resolves the frame chain for fields, collections, Wait for and next-page links.
+- `apps/worker/src/index.ts`: live Fill, Click and Choose option accept frame chains.
+- Tests:
+  - `tests/selection.test.ts` picks an element two iframes deep and resolves it through `locate`.
+  - `tests/browser.test.ts` collects items two iframes deep in a run.
+  - `tests/api.integration.test.ts` and `tests/auth.integration.test.ts` delete what they create.
+- Prettier formatting on the dialog files.
+
+### Verified
+
+- `pnpm typecheck` passed; `TEST_DATABASE_URL=… pnpm test` passed 84 of 84.
+- Dialog keyboard test in Chromium against the running app, 8 of 8:
+  - focus lands on the first field
+  - Tab and Shift+Tab never reach the page, and the page behind cannot be clicked
+  - Escape closes the dialog and focus returns to Sign in
+  - the reset-password dialog stays open after two Escapes
+- The sign-in and reset-password dialogs were checked visually in the Browser pane.
+- UI regression against the running app: auth forms 27 of 27, dashboard 44 of 44, template lifecycle 16 of 16, editor features on quotes.toscrape.com 24 of 24.
+- The count of `@example.test` users stayed at 64 across the test suite and all of these UI tests, so nothing new was left behind.
+
+### Still unverified
+
+- Screen readers, Safari and Firefox.
+- Nested frames on live sites, including cross-origin frames.
+- The 64 fixture users left by earlier runs are still in the local database.
+
 ## 2026-09-14 (night) — Docker Compose verification
 
 ### Causes found
@@ -35,13 +109,12 @@ Docker Desktop (arm64), with a separate Compose project and a throwaway env file
   - **Network boundaries:** the worker has no direct internet access. The proxy refused the metadata address, Postgres, Redis and port 22.
   - **Editor:** it connected over `wss://localhost/browser`, frames arrived, and Chromium ran with its sandbox on.
   - **The one failure:** the test clicked where the host's fonts put the title, which is not where the container draws it. The test now measures inside the container.
-- **Restructured Dockerfile:** all four images built in 201 s; the worker image is 2.84 GB.
+- **Restructured Dockerfile:** all four images built in 201 s; the worker image is 2.84 GB. A rebuild after a documentation-only change took 65 s and downloaded nothing.
+- **Rebuilt images, nothing patched:** 25 of 25 smoke checks passed, including selecting a book title in the container browser (the test now measures its position inside the container). The throwaway Compose project and its volumes were removed afterwards.
 - **Local checks:** `pnpm typecheck` passed; `TEST_DATABASE_URL=… pnpm test` passed 82 of 82.
 
 ### Still unverified
 
-- The smoke test against the rebuilt images.
-- That a code-only rebuild downloads nothing.
 - A webhook receiver that accepts deliveries.
 - A Linux VPS, a public domain certificate and real email.
 

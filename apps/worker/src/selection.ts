@@ -130,37 +130,44 @@ export async function inspect(
   container: string,
   highlightOnly = false,
 ) {
+  // Descend into the iframe under the point, level by level, recording one selector per frame.
+  // Bounding boxes are relative to the page viewport at every depth.
   let target = page.mainFrame(),
     offsetX = 0,
-    offsetY = 0,
-    frameSelector: string | undefined;
-  for (const frame of page.frames()) {
-    if (frame === page.mainFrame() || frame.parentFrame() !== page.mainFrame())
-      continue;
-    const element = await frame.frameElement(),
-      box = await element.boundingBox();
-    if (
-      box &&
-      x >= box.x &&
-      y >= box.y &&
-      x <= box.x + box.width &&
-      y <= box.y + box.height
-    ) {
-      target = frame;
-      offsetX = box.x;
-      offsetY = box.y;
-      frameSelector = await element.evaluate((el: Element) => {
-        const name = el.getAttribute("name");
-        if (name) return `iframe[name=${JSON.stringify(name)}]`;
-        if (el.id) return `#${CSS.escape(el.id)}`;
-        return `iframe:nth-of-type(${
-          Array.from(el.parentElement!.children)
-            .filter((c) => c.tagName === "IFRAME")
-            .indexOf(el) + 1
-        })`;
-      });
-      break;
+    offsetY = 0;
+  const frames: string[] = [];
+  for (let depth = 0; depth < 5; depth++) {
+    let inner: any;
+    for (const frame of target.childFrames()) {
+      const element = await frame.frameElement(),
+        box = await element.boundingBox();
+      if (
+        box &&
+        x >= box.x &&
+        y >= box.y &&
+        x <= box.x + box.width &&
+        y <= box.y + box.height
+      ) {
+        inner = frame;
+        offsetX = box.x;
+        offsetY = box.y;
+        frames.push(
+          await element.evaluate((el: Element) => {
+            const name = el.getAttribute("name");
+            if (name) return `iframe[name=${JSON.stringify(name)}]`;
+            if (el.id) return `#${CSS.escape(el.id)}`;
+            return `iframe:nth-of-type(${
+              Array.from(el.parentElement!.children)
+                .filter((c) => c.tagName === "IFRAME")
+                .indexOf(el) + 1
+            })`;
+          }),
+        );
+        break;
+      }
     }
+    if (!inner) break;
+    target = inner;
   }
   const args = JSON.stringify({
     x: x - offsetX,
@@ -169,5 +176,7 @@ export async function inspect(
     highlightOnly,
   });
   const result = await target.evaluate(`(${picker})(${args})`);
-  return result ? { ...result, frame: frameSelector } : null;
+  return result
+    ? { ...result, frame: frames.length > 1 ? frames : frames[0] }
+    : null;
 }

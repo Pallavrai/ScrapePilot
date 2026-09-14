@@ -30,6 +30,7 @@ import {
   type ScraperDefinitionV1,
 } from "@scrapepilot/contracts";
 import { api } from "./workspace";
+import { Modal } from "./modal";
 type Step = ScraperDefinitionV1["steps"][number];
 const stepNames: Record<Step["type"], string> = {
   navigate: "Open page",
@@ -232,7 +233,9 @@ export default function Builder({
       e.preventDefault();
       lastPoint.current = null;
       if (socket.current?.readyState === WebSocket.OPEN)
-        socket.current.send(JSON.stringify({ type: "scroll", deltaY: e.deltaY }));
+        socket.current.send(
+          JSON.stringify({ type: "scroll", deltaY: e.deltaY }),
+        );
     };
     c.addEventListener("wheel", onWheel, { passive: false });
     return () => c.removeEventListener("wheel", onWheel);
@@ -340,8 +343,11 @@ export default function Builder({
         if (data.type === "ready") {
           setConnected(true);
           // A new worker session starts in Interact mode: re-apply the toolbar mode and chosen collection.
-          const { d: current, mode: currentMode, selectedStep: chosen } =
-            latest.current;
+          const {
+            d: current,
+            mode: currentMode,
+            selectedStep: chosen,
+          } = latest.current;
           ws.send(JSON.stringify({ type: "mode", mode: currentMode }));
           const step = current?.steps.find((s) => s.id === chosen);
           if (step?.type === "extractCollection")
@@ -477,9 +483,7 @@ export default function Builder({
   }
   function preview() {
     if (!d) return;
-    if (
-      !d.steps.some((s) => s.type === "extractCollection" && s.fields.length)
-    )
+    if (!d.steps.some((s) => s.type === "extractCollection" && s.fields.length))
       return fail(
         "Nothing to preview yet. Click a value such as a product title, then choose Add output field.",
       );
@@ -598,7 +602,8 @@ export default function Builder({
         ? selection.selector
         : selection.collection;
     const existing = d.steps.find(
-      (s) => s.type === "extractCollection" && s.container.primary === container,
+      (s) =>
+        s.type === "extractCollection" && s.container.primary === container,
     );
     const stepId = existing?.id ?? crypto.randomUUID();
     if (!existing)
@@ -621,7 +626,9 @@ export default function Builder({
     setSelectedStep(stepId);
     syncCollection(container);
     const items =
-      container === selection.selector ? selection.count : selection.rows?.total;
+      container === selection.selector
+        ? selection.count
+        : selection.rows?.total;
     say(
       `Collecting ${items ?? "the"} items matching ${container}. Click a value inside one item, then choose Add output field.`,
     );
@@ -674,7 +681,11 @@ export default function Builder({
     const step = {
       id: crypto.randomUUID(),
       type,
-      locator: { primary: selection.selector, frame: selection.frame, fallbacks: [] },
+      locator: {
+        primary: selection.selector,
+        frame: selection.frame,
+        fallbacks: [],
+      },
       ...(type === "fill" || type === "select" ? { value } : {}),
     } as Step;
     // Actions happen before data is collected, so they go ahead of the first collect or pagination step.
@@ -685,11 +696,16 @@ export default function Builder({
     steps.splice(at < 0 ? steps.length : at, 0, step);
     setD({ ...d, steps });
     const where = `as step ${at < 0 ? steps.length : at + 1}`,
-      matches = selection.count > 1 ? ` (${selection.count} matches; the first is used)` : "";
+      matches =
+        selection.count > 1
+          ? ` (${selection.count} matches; the first is used)`
+          : "";
     const templated = /\{\{/.test(value);
     if (type !== "waitFor" && connected && !(type !== "click" && templated)) {
       send({ type: "perform", step }, true);
-      say(`Added "${stepNames[type]}" ${where}${matches}. Doing it in the browser…`);
+      say(
+        `Added "${stepNames[type]}" ${where}${matches}. Doing it in the browser…`,
+      );
     } else
       say(
         `Added "${stepNames[type]}" ${where}${matches}.${
@@ -769,7 +785,10 @@ export default function Builder({
     const stepId = crypto.randomUUID();
     setD({
       ...d,
-      steps: [...d.steps, { id: stepId, type: "followEach", linkField, fields: [] }],
+      steps: [
+        ...d.steps,
+        { id: stepId, type: "followEach", linkField, fields: [] },
+      ],
     });
     setSelectedStep(stepId);
     say(
@@ -1237,7 +1256,9 @@ export default function Builder({
                   Replace selector
                 </button>
                 <button onClick={() => addAction("fill")}>Fill input</button>
-                <button onClick={() => addAction("select")}>Choose option</button>
+                <button onClick={() => addAction("select")}>
+                  Choose option
+                </button>
                 <button onClick={() => addAction("click")}>Click</button>
                 <button onClick={() => addAction("waitFor")}>Wait for</button>
                 <button
@@ -1340,78 +1361,74 @@ export default function Builder({
         </section>
       </div>
       {upgrade && (
-        <div className="modal-backdrop">
-          <div className="modal wide">
-            <h2>Review template update · v{upgrade.number}</h2>
-            <p>
-              Your current draft will be replaced only when you apply this
-              update. Existing versions remain available.
-            </p>
-            <div className="diff-grid">
-              <pre>{JSON.stringify(upgrade.current, null, 2)}</pre>
-              <pre>{JSON.stringify(upgrade.proposed, null, 2)}</pre>
-            </div>
-            <div className="actions">
-              <button onClick={() => setUpgrade(null)}>Keep current</button>
-              <button
-                className="primary"
-                onClick={async () => {
-                  try {
-                    await api(`scrapers/${id}/upgrade`, "POST", {
-                      versionId: upgrade.versionId,
-                    });
-                    setD(upgrade.proposed);
-                    setUpgrade(null);
-                    say("Template update applied to draft.");
-                  } catch (e) {
-                    setUpgrade(null);
-                    fail(e);
-                  }
-                }}
-              >
-                Apply update
-              </button>
-            </div>
+        <Modal labelledBy="upgrade-title" wide onClose={() => setUpgrade(null)}>
+          <h2 id="upgrade-title">Review template update · v{upgrade.number}</h2>
+          <p>
+            Your current draft will be replaced only when you apply this update.
+            Existing versions remain available.
+          </p>
+          <div className="diff-grid">
+            <pre>{JSON.stringify(upgrade.current, null, 2)}</pre>
+            <pre>{JSON.stringify(upgrade.proposed, null, 2)}</pre>
           </div>
-        </div>
+          <div className="actions">
+            <button onClick={() => setUpgrade(null)}>Keep current</button>
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  await api(`scrapers/${id}/upgrade`, "POST", {
+                    versionId: upgrade.versionId,
+                  });
+                  setD(upgrade.proposed);
+                  setUpgrade(null);
+                  say("Template update applied to draft.");
+                } catch (e) {
+                  setUpgrade(null);
+                  fail(e);
+                }
+              }}
+            >
+              Apply update
+            </button>
+          </div>
+        </Modal>
       )}
       {raw && (
-        <div className="modal-backdrop">
-          <div className="modal wide">
-            <h2>Workflow definition</h2>
-            <p>
-              Edit typed inputs, field mappings, fallback selectors, and detail
-              extraction.
-            </p>
-            {jsonError && <p className="alert">{jsonError}</p>}
-            <textarea
-              className="code-editor"
-              value={json}
-              onChange={(e) => setJson(e.target.value)}
-            />
-            <div className="actions">
-              <button onClick={() => setRaw(false)}>Cancel</button>
-              <button
-                className="primary"
-                onClick={() => {
-                  try {
-                    setD(definitionSchema.parse(JSON.parse(json)));
-                    setRaw(false);
-                    say("Definition applied. Save the draft to keep it.");
-                  } catch (e) {
-                    setJsonError(
-                      e instanceof SyntaxError
-                        ? `Invalid JSON: ${e.message}`
-                        : explainDefinitionError(e),
-                    );
-                  }
-                }}
-              >
-                Apply definition
-              </button>
-            </div>
+        <Modal labelledBy="definition-title" wide onClose={() => setRaw(false)}>
+          <h2 id="definition-title">Workflow definition</h2>
+          <p>
+            Edit typed inputs, field mappings, fallback selectors, and detail
+            extraction.
+          </p>
+          {jsonError && <p className="alert">{jsonError}</p>}
+          <textarea
+            className="code-editor"
+            value={json}
+            onChange={(e) => setJson(e.target.value)}
+          />
+          <div className="actions">
+            <button onClick={() => setRaw(false)}>Cancel</button>
+            <button
+              className="primary"
+              onClick={() => {
+                try {
+                  setD(definitionSchema.parse(JSON.parse(json)));
+                  setRaw(false);
+                  say("Definition applied. Save the draft to keep it.");
+                } catch (e) {
+                  setJsonError(
+                    e instanceof SyntaxError
+                      ? `Invalid JSON: ${e.message}`
+                      : explainDefinitionError(e),
+                  );
+                }
+              }}
+            >
+              Apply definition
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

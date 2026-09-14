@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Copy, Download, Flag, Layers, Plus, Trash2 } from "lucide-react";
 import { Badge, EmptyState } from "@scrapepilot/ui";
 import { api } from "./workspace";
+import { Modal } from "./modal";
 /** Runs an action, shows its error or success message, then refreshes the page data. */
 export type Act = (
   work: () => Promise<unknown>,
@@ -18,15 +19,6 @@ export const statusTone = (status?: string) =>
         : "neutral";
 export const when = (value?: string | null) =>
   value ? new Date(value).toLocaleString() : "—";
-function useEscape(onClose: () => void) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-}
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -47,35 +39,29 @@ export function RevealDialog({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState<"" | "yes" | "no">("");
-  useEscape(onClose);
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="reveal-title"
-      >
-        <h2 id="reveal-title">{title}</h2>
-        <p>{note}</p>
-        <code className="secret-value">{value}</code>
-        {copied === "no" && (
-          <p className="form-message error" role="alert">
-            The browser blocked copying. Select the text and copy it manually.
-          </p>
-        )}
-        <div className="actions">
-          <button
-            onClick={async () => setCopied((await copyText(value)) ? "yes" : "no")}
-          >
-            <Copy size={15} /> {copied === "yes" ? "Copied" : "Copy"}
-          </button>
-          <button className="primary" onClick={onClose}>
-            I have saved it
-          </button>
-        </div>
+    <Modal labelledBy="reveal-title" onClose={onClose}>
+      <h2 id="reveal-title">{title}</h2>
+      <p>{note}</p>
+      <code className="secret-value">{value}</code>
+      {copied === "no" && (
+        <p className="form-message error" role="alert">
+          The browser blocked copying. Select the text and copy it manually.
+        </p>
+      )}
+      <div className="actions">
+        <button
+          onClick={async () =>
+            setCopied((await copyText(value)) ? "yes" : "no")
+          }
+        >
+          <Copy size={15} /> {copied === "yes" ? "Copied" : "Copy"}
+        </button>
+        <button className="primary" onClick={onClose}>
+          I have saved it
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 export function ScraperCards({
@@ -160,11 +146,15 @@ function ResultsDialog({
   const { run, rows, next, problem } = state;
   const close = () => onChange(null);
   const [copied, setCopied] = useState("");
-  useEscape(close);
   async function more() {
     try {
       const data = await api(`runs/${run.id}/results?limit=100&cursor=${next}`);
-      onChange({ ...state, rows: [...rows, ...data.rows], next: data.nextCursor, problem: "" });
+      onChange({
+        ...state,
+        rows: [...rows, ...data.rows],
+        next: data.nextCursor,
+        problem: "",
+      });
     } catch (e) {
       onChange({ ...state, problem: (e as Error).message });
     }
@@ -187,57 +177,50 @@ function ResultsDialog({
     }
   }
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal wide"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="results-title"
-      >
-        <button className="close" aria-label="Close" onClick={close}>
-          ×
-        </button>
-        <h2 id="results-title">{run.scraperName}</h2>
-        <p>
-          Run {run.id.slice(0, 8)} · {run.status} · {run.rowCount} rows ·{" "}
-          {when(run.createdAt)}
+    <Modal labelledBy="results-title" wide onClose={close}>
+      <button className="close" aria-label="Close" onClick={close}>
+        ×
+      </button>
+      <h2 id="results-title">{run.scraperName}</h2>
+      <p>
+        Run {run.id.slice(0, 8)} · {run.status} · {run.rowCount} rows ·{" "}
+        {when(run.createdAt)}
+      </p>
+      {problem && (
+        <p className="form-message error" role="alert">
+          {problem}
         </p>
-        {problem && (
-          <p className="form-message error" role="alert">
-            {problem}
-          </p>
-        )}
-        {rows.length ? (
-          <pre className="results-json">{JSON.stringify(rows, null, 2)}</pre>
-        ) : (
-          <p className="form-message error">
-            No result rows are stored for this run. They were deleted or passed
-            the 30-day retention.
-          </p>
-        )}
-        <div className="actions">
-          {next !== null && <button onClick={more}>Load more</button>}
-          <button
-            disabled={!rows.length}
-            onClick={async () =>
-              setCopied(
-                (await copyText(JSON.stringify(rows, null, 2)))
-                  ? `Copied ${rows.length} rows`
-                  : "Copy blocked; select the text",
-              )
-            }
-          >
-            <Copy size={15} /> {copied || "Copy JSON"}
-          </button>
-          <button disabled={!rows.length} onClick={() => download("json")}>
-            <Download size={15} /> Download JSON
-          </button>
-          <button disabled={!rows.length} onClick={() => download("csv")}>
-            <Download size={15} /> Download CSV
-          </button>
-        </div>
+      )}
+      {rows.length ? (
+        <pre className="results-json">{JSON.stringify(rows, null, 2)}</pre>
+      ) : (
+        <p className="form-message error">
+          No result rows are stored for this run. They were deleted or passed
+          the 30-day retention.
+        </p>
+      )}
+      <div className="actions">
+        {next !== null && <button onClick={more}>Load more</button>}
+        <button
+          disabled={!rows.length}
+          onClick={async () =>
+            setCopied(
+              (await copyText(JSON.stringify(rows, null, 2)))
+                ? `Copied ${rows.length} rows`
+                : "Copy blocked; select the text",
+            )
+          }
+        >
+          <Copy size={15} /> {copied || "Copy JSON"}
+        </button>
+        <button disabled={!rows.length} onClick={() => download("json")}>
+          <Download size={15} /> Download JSON
+        </button>
+        <button disabled={!rows.length} onClick={() => download("csv")}>
+          <Download size={15} /> Download CSV
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 export function RunsTable({
@@ -338,7 +321,9 @@ export function RunsTable({
                         >
                           View results
                         </button>
-                        <button onClick={() => onRepair(r)}>Repair / edit</button>
+                        <button onClick={() => onRepair(r)}>
+                          Repair / edit
+                        </button>
                         {r.hasScreenshot && (
                           <a
                             className="button"
@@ -468,8 +453,9 @@ export function KeysPanel({ items, act }: { items: any[]; act: Act }) {
 export function SecretsPanel({ items, act }: { items: any[]; act: Act }) {
   const [values, setValues] = useState({ domain: "", name: "", value: "" }),
     [problem, setProblem] = useState("");
-  const set = (field: keyof typeof values) => (e: { target: { value: string } }) =>
-    setValues((v) => ({ ...v, [field]: e.target.value }));
+  const set =
+    (field: keyof typeof values) => (e: { target: { value: string } }) =>
+      setValues((v) => ({ ...v, [field]: e.target.value }));
   return (
     <>
       <p className="panel-note">
@@ -570,71 +556,68 @@ function ReportDialog({
   const [reason, setReason] = useState(""),
     [problem, setProblem] = useState(""),
     [pending, setPending] = useState(false);
-  useEscape(onClose);
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="report-title"
+    <Modal labelledBy="report-title" onClose={onClose}>
+      <button className="close" aria-label="Close" onClick={onClose}>
+        ×
+      </button>
+      <h2 id="report-title">Report "{listing.name}"</h2>
+      <p>
+        Tell an administrator what is wrong, for example that it collects
+        personal data or targets a site that forbids automation.
+      </p>
+      <form
+        noValidate
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (reason.trim().length < 10)
+            return setProblem(
+              "Describe the problem in at least 10 characters.",
+            );
+          setPending(true);
+          try {
+            await api(`marketplace/${listing.id}/report`, "POST", {
+              reason: reason.trim(),
+            });
+            onClose();
+            await act(
+              async () => {},
+              "Thanks. An administrator will review your report.",
+            );
+          } catch (err) {
+            setProblem((err as Error).message);
+          } finally {
+            setPending(false);
+          }
+        }}
       >
-        <button className="close" aria-label="Close" onClick={onClose}>
-          ×
-        </button>
-        <h2 id="report-title">Report "{listing.name}"</h2>
-        <p>
-          Tell an administrator what is wrong, for example that it collects
-          personal data or targets a site that forbids automation.
-        </p>
-        <form
-          noValidate
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (reason.trim().length < 10)
-              return setProblem("Describe the problem in at least 10 characters.");
-            setPending(true);
-            try {
-              await api(`marketplace/${listing.id}/report`, "POST", {
-                reason: reason.trim(),
-              });
-              onClose();
-              await act(async () => {}, "Thanks. An administrator will review your report.");
-            } catch (err) {
-              setProblem((err as Error).message);
-            } finally {
-              setPending(false);
-            }
-          }}
-        >
-          <label htmlFor="report-reason" className="field-label">
-            What is wrong?
-          </label>
-          <textarea
-            id="report-reason"
-            className="dialog-textarea"
-            maxLength={2000}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            aria-invalid={!!problem}
-            aria-describedby={problem ? "report-problem" : undefined}
-          />
-          {problem && (
-            <small id="report-problem" className="field-error" role="alert">
-              {problem}
-            </small>
-          )}
-          <div className="actions">
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="primary" type="submit" disabled={pending}>
-              {pending ? "Sending…" : "Send report"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <label htmlFor="report-reason" className="field-label">
+          What is wrong?
+        </label>
+        <textarea
+          id="report-reason"
+          className="dialog-textarea"
+          maxLength={2000}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          aria-invalid={!!problem}
+          aria-describedby={problem ? "report-problem" : undefined}
+        />
+        {problem && (
+          <small id="report-problem" className="field-error" role="alert">
+            {problem}
+          </small>
+        )}
+        <div className="actions">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" type="submit" disabled={pending}>
+            {pending ? "Sending…" : "Send report"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 export function MarketplaceGrid({
@@ -744,7 +727,11 @@ export function ReviewQueue({ items, act }: { items: any[]; act: Act }) {
       </div>
       {!shown.length && (
         <EmptyState
-          title={filter === "pending" ? "Nothing to review" : `No ${filter} templates`}
+          title={
+            filter === "pending"
+              ? "Nothing to review"
+              : `No ${filter} templates`
+          }
         >
           {filter === "pending"
             ? "New template submissions appear here."

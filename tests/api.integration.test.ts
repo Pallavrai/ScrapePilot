@@ -268,6 +268,19 @@ describe.skipIf(!enabled)("PostgreSQL API tenant integration", () => {
       await server.getQueue().close();
       await server.redis.quit();
     }
-    if (store) await store.client.end();
+    if (!store) return;
+    // Remove everything the two fixture users created, children before parents.
+    const { db, sql } = store;
+    const owned = sql`in (${a}, ${b})`;
+    await db.execute(sql`delete from reports where owner_id ${owned} or listing_id in (select id from listings where owner_id ${owned})`);
+    await db.execute(sql`delete from listings where owner_id ${owned}`);
+    await db.execute(sql`delete from webhook_deliveries where run_id in (select id from runs where owner_id ${owned})`);
+    await db.execute(sql`delete from result_rows where run_id in (select id from runs where owner_id ${owned})`);
+    await db.execute(sql`delete from runs where owner_id ${owned}`);
+    await db.execute(sql`delete from versions where scraper_id in (select id from scrapers where owner_id ${owned})`);
+    for (const table of ["browser_sessions", "scrapers", "api_keys", "secrets", "webhooks", "usage_events", "audit_events"])
+      await db.execute(sql`delete from ${sql.raw(table)} where owner_id ${owned}`);
+    await db.execute(sql`delete from "user" where id ${owned}`);
+    await store.client.end();
   });
 });

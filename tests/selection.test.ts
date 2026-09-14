@@ -9,11 +9,15 @@ const card = (n: number) =>
   `<div data-component-type="s-search-result" class="s-result-item"><span>Sponsored</span>${"<div class=wrap>".repeat(12)}<div class="col"><div class="col-inner"><span>Image ${n}</span></div></div><div class="col"><div class="col-inner" style="padding:20px"><a class="a-link-normal" href="/dp/${n}"><h2 class="a-size-medium" aria-label="Product ${n} with a long marketing title"><span>Product ${n}</span></h2></a><span class="a-price-whole">${n}99</span></div></div>${"</div>".repeat(12)}</div>`;
 const fixture = `<div class="s-main-slot"><div class="s-result-item">Results</div>${[1, 2, 3].map(card).join("")}</div>`;
 const cards = 'div[data-component-type="s-search-result"]';
+// A value two iframes deep; each srcdoc level escapes the HTML of the level inside it.
+const deepest = `<p class="deep">Deep value</p>`;
+const middle = `<h3>Outer</h3><iframe id="inner" style="width:400px;height:200px;border:0" srcdoc="${deepest.replaceAll('"', "&quot;")}"></iframe>`;
+const nested = `<h1>Top</h1><iframe id="outer" style="width:600px;height:400px;border:0" srcdoc="${middle.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></iframe>`;
 const source = (path: string) => JSON.stringify(pathToFileURL(resolve(path)).href);
 // Runs under tsx like the worker: its esbuild keepNames transform once broke the
 // in-page picker with "__name is not defined", which Vitest's own transform hides.
 const probe = `
-import { chromium } from ${source("packages/scraper-engine/src/index.ts")};
+import { chromium, locate } from ${source("packages/scraper-engine/src/index.ts")};
 import { inspect } from ${source("apps/worker/src/selection.ts")};
 const browser = await chromium.launch();
 const textsIn = (page, collection, rel) =>
@@ -27,7 +31,7 @@ try {
   const scoped = await inspect(page, x, y, process.env.CARDS);
   const inner = await page.locator(".col-inner").nth(1).boundingBox();
   const column = await inspect(page, inner.x + 5, inner.y + 5, process.env.CARDS);
-  console.log(JSON.stringify({
+  const found = {
     plain,
     scoped,
     suggestedTitles: await textsIn(page, plain.collection, plain.relativeSelector),
@@ -35,7 +39,14 @@ try {
     column,
     columnTexts: await textsIn(page, process.env.CARDS, column.relativeSelector),
     expectedColumns: await page.$$eval(process.env.CARDS, (items) => items.map((item) => item.querySelectorAll(".col-inner")[1].textContent)),
-  }));
+  };
+  await page.setContent(process.env.NESTED);
+  const deep = page.frameLocator("#outer").frameLocator("#inner").locator(".deep");
+  await deep.waitFor();
+  const deepBox = await deep.boundingBox();
+  const inFrames = await inspect(page, deepBox.x + deepBox.width / 2, deepBox.y + deepBox.height / 2, "");
+  const resolved = await locate(page, { primary: inFrames.selector, fallbacks: [], frame: inFrames.frame });
+  console.log(JSON.stringify({ ...found, inFrames, inFramesText: await resolved.first().textContent() }));
 } finally {
   await browser.close();
 }`;
@@ -47,7 +58,7 @@ describe("visual element selection in the worker runtime", () => {
       ["--import", "tsx", "--input-type=module", "--eval", probe],
       {
         encoding: "utf8",
-        env: { ...process.env, FIXTURE: fixture, CARDS: cards },
+        env: { ...process.env, FIXTURE: fixture, CARDS: cards, NESTED: nested },
         timeout: 60000,
       },
     );
@@ -72,5 +83,9 @@ describe("visual element selection in the worker runtime", () => {
   it("builds field selectors that resolve inside every chosen collection item", () => {
     expect(out.scopedTitles).toEqual(["Product 1", "Product 2", "Product 3"]);
     expect(out.scoped.rows).toEqual({ matched: 3, total: 3 });
+  });
+  it("selects inside nested iframes with a frame chain the engine resolves", () => {
+    expect(out.inFrames.frame).toEqual(["#outer", "#inner"]);
+    expect(out.inFramesText).toBe("Deep value");
   });
 });

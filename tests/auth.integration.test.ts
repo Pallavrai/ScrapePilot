@@ -17,6 +17,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
   () => {
     let auth: any, db: any;
     const email = `auth-${randomUUID()}@example.test`,
+      trimmedEmail = `trim-${randomUUID()}@example.test`,
       password = "IntegrationPassword!234";
     beforeAll(async () => {
       process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -84,14 +85,22 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)(
       const created = await auth.api.signUpEmail({
         body: {
           name: "  Ada Lovelace  ",
-          email: `trim-${randomUUID()}@example.test`,
+          email: trimmedEmail,
           password,
         },
       });
       expect(created.user.name).toBe("Ada Lovelace");
     });
     afterAll(async () => {
-      await db?.client.end();
+      if (!db) return;
+      // Sessions and accounts cascade with the user; reset tokens store the user id as their value.
+      await db.db.execute(
+        db.sql`delete from verification where value in (select id from "user" where email in (${email}, ${trimmedEmail}))`,
+      );
+      await db.db.execute(
+        db.sql`delete from "user" where email in (${email}, ${trimmedEmail})`,
+      );
+      await db.client.end();
     });
   },
 );

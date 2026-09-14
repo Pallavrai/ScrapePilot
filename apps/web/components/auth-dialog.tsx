@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Command, Eye, EyeOff } from "lucide-react";
 import { createAuthClient } from "better-auth/react";
+import { Modal } from "./modal";
 export const authClient = createAuthClient();
 export const PASSWORD_MIN = 12,
   PASSWORD_MAX = 128;
@@ -104,7 +105,13 @@ function FieldShell({
 export function Field({ label, error, hint, ...input }: FieldProps) {
   const id = useId();
   return (
-    <FieldShell label={label} id={id} error={error} hint={hint} name={input.name}>
+    <FieldShell
+      label={label}
+      id={id}
+      error={error}
+      hint={hint}
+      name={input.name}
+    >
       <input
         {...input}
         id={id}
@@ -118,7 +125,13 @@ export function PasswordField({ label, error, hint, ...input }: FieldProps) {
   const id = useId(),
     [visible, setVisible] = useState(false);
   return (
-    <FieldShell label={label} id={id} error={error} hint={hint} name={input.name}>
+    <FieldShell
+      label={label}
+      id={id}
+      error={error}
+      hint={hint}
+      name={input.name}
+    >
       <div className="password-input">
         <input
           {...input}
@@ -197,13 +210,6 @@ export default function AuthDialog({
     onBlur: () => setTouched((t) => ({ ...t, [field]: true })),
     error: shown(field),
   });
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !pending) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, pending]);
   function switchMode(next: Mode, keep?: FormNotice) {
     setMode(next);
     setSubmitted(false);
@@ -282,125 +288,118 @@ export default function AuthDialog({
     }
   }
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="auth-title"
+    <Modal labelledBy="auth-title" onClose={pending ? undefined : onClose}>
+      <button
+        type="button"
+        className="close"
+        onClick={onClose}
+        aria-label="Close"
       >
+        ×
+      </button>
+      <span className="brand-icon">
+        <Command />
+      </span>
+      <h2 id="auth-title">
+        {signup ? "Create your workspace" : "Welcome back"}
+      </h2>
+      <p>
+        {signup
+          ? "Verify your email once, then build scrapers."
+          : "Sign in to your workspace."}
+      </p>
+      {notice && (
+        <div
+          className={`form-message ${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+        >
+          {notice.text}
+          {action === "resend" && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={resend}
+              disabled={pending}
+            >
+              Send a new verification link
+            </button>
+          )}
+          {action === "signin" && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => switchMode("signin")}
+            >
+              Sign in instead
+            </button>
+          )}
+        </div>
+      )}
+      <form ref={form} onSubmit={submit} noValidate>
+        {signup && (
+          <Field
+            label="Name"
+            autoComplete="name"
+            maxLength={80}
+            autoFocus
+            {...bind("name")}
+          />
+        )}
+        <Field
+          label="Email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          spellCheck={false}
+          autoFocus={!signup}
+          {...bind("email")}
+        />
+        <PasswordField
+          label="Password"
+          autoComplete={signup ? "new-password" : "current-password"}
+          hint={
+            signup
+              ? `At least ${PASSWORD_MIN} characters${values.password ? ` (${values.password.length}/${PASSWORD_MIN})` : ""}.`
+              : undefined
+          }
+          {...bind("password")}
+        />
+        {signup && (
+          <PasswordField
+            label="Confirm password"
+            autoComplete="new-password"
+            {...bind("confirm")}
+          />
+        )}
+        <button
+          className="primary"
+          type="submit"
+          disabled={pending}
+          aria-busy={pending}
+        >
+          {pending
+            ? signup
+              ? "Creating account…"
+              : "Signing in…"
+            : signup
+              ? "Create account"
+              : "Sign in"}
+        </button>
+      </form>
+      <div className="auth-links">
+        {!signup && <a href="/reset-password">Forgot password?</a>}
         <button
           type="button"
-          className="close"
-          onClick={onClose}
-          aria-label="Close"
+          className="link-button"
+          onClick={() => switchMode(signup ? "signin" : "signup")}
+          disabled={pending}
         >
-          ×
-        </button>
-        <span className="brand-icon">
-          <Command />
-        </span>
-        <h2 id="auth-title">
-          {signup ? "Create your workspace" : "Welcome back"}
-        </h2>
-        <p>
           {signup
-            ? "Verify your email once, then build scrapers."
-            : "Sign in to your workspace."}
-        </p>
-        {notice && (
-          <div
-            className={`form-message ${notice.tone}`}
-            role={notice.tone === "error" ? "alert" : "status"}
-          >
-            {notice.text}
-            {action === "resend" && (
-              <button
-                type="button"
-                className="link-button"
-                onClick={resend}
-                disabled={pending}
-              >
-                Send a new verification link
-              </button>
-            )}
-            {action === "signin" && (
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => switchMode("signin")}
-              >
-                Sign in instead
-              </button>
-            )}
-          </div>
-        )}
-        <form ref={form} onSubmit={submit} noValidate>
-          {signup && (
-            <Field
-              label="Name"
-              autoComplete="name"
-              maxLength={80}
-              autoFocus
-              {...bind("name")}
-            />
-          )}
-          <Field
-            label="Email"
-            type="email"
-            inputMode="email"
-            autoComplete="email"
-            autoCapitalize="none"
-            spellCheck={false}
-            autoFocus={!signup}
-            {...bind("email")}
-          />
-          <PasswordField
-            label="Password"
-            autoComplete={signup ? "new-password" : "current-password"}
-            hint={
-              signup
-                ? `At least ${PASSWORD_MIN} characters${values.password ? ` (${values.password.length}/${PASSWORD_MIN})` : ""}.`
-                : undefined
-            }
-            {...bind("password")}
-          />
-          {signup && (
-            <PasswordField
-              label="Confirm password"
-              autoComplete="new-password"
-              {...bind("confirm")}
-            />
-          )}
-          <button
-            className="primary"
-            type="submit"
-            disabled={pending}
-            aria-busy={pending}
-          >
-            {pending
-              ? signup
-                ? "Creating account…"
-                : "Signing in…"
-              : signup
-                ? "Create account"
-                : "Sign in"}
-          </button>
-        </form>
-        <div className="auth-links">
-          {!signup && <a href="/reset-password">Forgot password?</a>}
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => switchMode(signup ? "signin" : "signup")}
-            disabled={pending}
-          >
-            {signup
-              ? "Already have an account? Sign in"
-              : "New here? Create an account"}
-          </button>
-        </div>
+            ? "Already have an account? Sign in"
+            : "New here? Create an account"}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -10,6 +10,7 @@ import {
   passwordIssue,
   type FormNotice,
 } from "../../components/auth-dialog";
+import { Modal } from "../../components/modal";
 export default function ResetPassword() {
   const [token, setToken] = useState(""),
     [values, setValues] = useState({ email: "", password: "", confirm: "" }),
@@ -96,82 +97,75 @@ export default function ResetPassword() {
     }
   }
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="reset-title"
-      >
-        <h2 id="reset-title">
-          {token ? "Choose a new password" : "Reset your password"}
-        </h2>
-        <p>
-          {token
-            ? "Use a password you don't use anywhere else."
-            : "Enter your account email and we'll send you a reset link."}
-        </p>
-        {notice && (
-          <div
-            className={`form-message ${notice.tone}`}
-            role={notice.tone === "error" ? "alert" : "status"}
-          >
-            {notice.text}
-          </div>
-        )}
-        {done ? (
-          <a className="button primary" href="/?signin=1">
-            Sign in
-          </a>
-        ) : (
-          <form ref={form} onSubmit={submit} noValidate>
-            {token ? (
-              <>
-                <PasswordField
-                  label="New password"
-                  autoComplete="new-password"
-                  autoFocus
-                  hint="At least 12 characters."
-                  {...bind("password")}
-                />
-                <PasswordField
-                  label="Confirm new password"
-                  autoComplete="new-password"
-                  {...bind("confirm")}
-                />
-              </>
-            ) : (
-              <Field
-                label="Email"
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                spellCheck={false}
-                autoFocus
-                {...bind("email")}
-              />
-            )}
-            <button
-              className="primary"
-              type="submit"
-              disabled={pending}
-              aria-busy={pending}
-            >
-              {pending
-                ? token
-                  ? "Updating…"
-                  : "Sending…"
-                : token
-                  ? "Update password"
-                  : "Send reset link"}
-            </button>
-          </form>
-        )}
-        <div className="auth-links">
-          <a href="/">Back to ScrapePilot</a>
+    <Modal labelledBy="reset-title">
+      <h2 id="reset-title">
+        {token ? "Choose a new password" : "Reset your password"}
+      </h2>
+      <p>
+        {token
+          ? "Use a password you don't use anywhere else."
+          : "Enter your account email and we'll send you a reset link."}
+      </p>
+      {notice && (
+        <div
+          className={`form-message ${notice.tone}`}
+          role={notice.tone === "error" ? "alert" : "status"}
+        >
+          {notice.text}
         </div>
+      )}
+      {done ? (
+        <a className="button primary" href="/?signin=1">
+          Sign in
+        </a>
+      ) : (
+        <form ref={form} onSubmit={submit} noValidate>
+          {token ? (
+            <>
+              <PasswordField
+                label="New password"
+                autoComplete="new-password"
+                autoFocus
+                hint="At least 12 characters."
+                {...bind("password")}
+              />
+              <PasswordField
+                label="Confirm new password"
+                autoComplete="new-password"
+                {...bind("confirm")}
+              />
+            </>
+          ) : (
+            <Field
+              label="Email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              {...bind("email")}
+            />
+          )}
+          <button
+            className="primary"
+            type="submit"
+            disabled={pending}
+            aria-busy={pending}
+          >
+            {pending
+              ? token
+                ? "Updating…"
+                : "Sending…"
+              : token
+                ? "Update password"
+                : "Send reset link"}
+          </button>
+        </form>
+      )}
+      <div className="auth-links">
+        <a href="/">Back to ScrapePilot</a>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -2,7 +2,10 @@ import { z } from "zod";
 export const locatorSchema = z.object({
   primary: z.string().min(1).max(1000),
   fallbacks: z.array(z.string().max(1000)).max(5).default([]),
-  frame: z.string().optional(),
+  // One iframe selector, or a chain from the page down through nested iframes.
+  frame: z
+    .union([z.string(), z.array(z.string().max(1000)).min(1).max(5)])
+    .optional(),
   fingerprint: z
     .object({ tag: z.string(), text: z.string().optional() })
     .optional(),
