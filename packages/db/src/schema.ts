@@ -99,6 +99,8 @@ export const runs = pgTable(
       .references(() => versions.id),
     input: jsonb("input").notNull(),
     status: text("status").default("queued").notNull(),
+    // "cloud" runs in the worker; "browser" runs in the person's own browser through the extension.
+    source: text("source").default("cloud").notNull(),
     idempotencyKey: text("idempotency_key"),
     requestHash: text("request_hash").notNull(),
     error: jsonb("error"),

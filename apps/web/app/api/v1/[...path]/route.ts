@@ -29,6 +29,7 @@ import {
   emptyDefinition,
   explainDefinitionError,
   validateInput,
+  type ScraperDefinitionV1,
 } from "@scrapepilot/contracts";
 import {
   encrypt,
@@ -84,6 +85,14 @@ function toCsv(rows: Record<string, unknown>[], order: string[] = []) {
 }
 // Two decimals, so a few seconds of browser time does not read as zero.
 const usedMinutes = (ms: unknown) => Math.round(Number(ms) / 600) / 100;
+// Browser runs use the person's own signed-in browser. Stored credentials never leave the
+// server, and detail pages are not supported there yet.
+function browserRunIssue(d: ScraperDefinitionV1) {
+  if (/\{\{\s*secret\./.test(JSON.stringify(d.steps)))
+    return "This scraper fills in stored credentials, which only cloud runs use. Sign in to the site in your browser, remove the login steps and save a version, or run it in the cloud.";
+  if (d.steps.some((s) => s.type === "followEach"))
+    return "Detail pages don't run in your browser yet. Run this scraper in the cloud.";
+}
 async function handle(
   req: Request,
   { params }: { params: Promise<{ path: string[] }> },
@@ -94,7 +103,9 @@ async function handle(
       url = new URL(req.url),
       method = req.method;
     const body =
-      method === "POST" || method === "PATCH" ? await readBody(req) : {};
+      method === "POST" || method === "PATCH"
+        ? await readBody(req, action === "rows" ? 1048576 : undefined)
+        : {};
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
     if (resource === "me") {
@@ -134,8 +145,25 @@ async function handle(
           .where(eq(runs.ownerId, actor.id))
           .orderBy(runs.scraperId, desc(runs.createdAt));
         const lastRuns = new Map(latest.map((r) => [r.scraperId, r]));
+        // What the extension needs to start a run: the version that runs, its sites and inputs.
+        const saved = await db
+          .selectDistinctOn([versions.scraperId], {
+            scraperId: versions.scraperId,
+            number: versions.number,
+            allowedDomains: sql`${versions.definition}->'allowedDomains'`,
+            inputs: sql`${versions.definition}->'inputs'`,
+          })
+          .from(versions)
+          .innerJoin(scrapers, eq(versions.scraperId, scrapers.id))
+          .where(eq(scrapers.ownerId, actor.id))
+          .orderBy(versions.scraperId, desc(versions.number));
+        const latestVersions = new Map(saved.map((v) => [v.scraperId, v]));
         return json(
-          list.map((s) => ({ ...s, lastRun: lastRuns.get(s.id) ?? null })),
+          list.map((s) => ({
+            ...s,
+            lastRun: lastRuns.get(s.id) ?? null,
+            latestVersion: latestVersions.get(s.id) ?? null,
+          })),
         );
       }
       if (!id && method === "POST") {
@@ -429,6 +457,8 @@ async function handle(
             .where(
               and(
                 eq(runs.ownerId, actor.id),
+                // Runs in the person's own browser use no worker capacity.
+                eq(runs.source, "cloud"),
                 sql`${runs.status} in ('queued','running')`,
               ),
             )
@@ -480,6 +510,60 @@ async function handle(
           { jobId: run.id, removeOnComplete: 1000, removeOnFail: 1000 },
         );
         return json({ runId: run.id, status: run.status }, 202);
+      }
+      if (action === "browser-runs" && method === "POST") {
+        const [v] = await db
+          .select()
+          .from(versions)
+          .where(
+            and(
+              eq(versions.scraperId, id),
+              body.version ? eq(versions.number, body.version) : undefined,
+            ),
+          )
+          .orderBy(desc(versions.number))
+          .limit(1);
+        if (!v) throw new HttpError(409, "Save a version first");
+        const definition = definitionSchema.parse(v.definition),
+          input = validateInput(definition, body.input ?? {}),
+          issue = browserRunIssue(definition);
+        if (issue) throw new HttpError(400, issue);
+        const [blockedDomain] = await db
+          .select({ domain: policies.domain })
+          .from(policies)
+          .where(
+            and(
+              inArray(
+                policies.domain,
+                definition.allowedDomains.map((d) => d.toLowerCase()),
+              ),
+              eq(policies.blocked, true),
+            ),
+          )
+          .limit(1);
+        if (blockedDomain)
+          throw new HttpError(
+            403,
+            `An administrator blocked ${blockedDomain.domain}, so this scraper can't run.`,
+          );
+        const [run] = await db
+          .insert(runs)
+          .values({
+            id: randomUUID(),
+            ownerId: actor.id,
+            scraperId: id,
+            versionId: v.id,
+            input,
+            requestHash: hash(JSON.stringify({ version: v.id, input })),
+            source: "browser",
+            status: "running",
+            startedAt: new Date(),
+          })
+          .returning();
+        return json(
+          { runId: run.id, version: v.number, definition, input },
+          201,
+        );
       }
       if (action === "browser" && method === "POST") {
         const token = randomBytes(32).toString("hex"),
@@ -592,6 +676,121 @@ async function handle(
         .from(runs)
         .where(owned(runs, id, actor.id));
       if (!r) throw new HttpError(404, "Run not found");
+      if ((action === "rows" || action === "finish") && r.source !== "browser")
+        throw new HttpError(409, "Only runs in your browser send their own rows and outcome.");
+      if (action === "rows" && method === "POST") {
+        if (!Array.isArray(body.rows) || body.rows.length > 1000)
+          throw new HttpError(400, "Send rows as an array of up to 1,000 objects.");
+        const [ran] = await db
+          .select({ definition: versions.definition })
+          .from(versions)
+          .where(eq(versions.id, r.versionId));
+        const d = definitionSchema.parse(ran.definition);
+        const order = [
+          ...new Set(
+            d.steps.flatMap((s) => ("fields" in s ? s.fields.map((f) => f.name) : [])),
+          ),
+        ];
+        const rows = body.rows.map((raw: unknown) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw))
+            throw new HttpError(400, "Each row must be an object.");
+          const values = raw as Record<string, unknown>,
+            unknown = Object.keys(values).find((k) => !order.includes(k));
+          if (unknown)
+            throw new HttpError(400, `Row field "${unknown.slice(0, 50)}" is not in this scraper.`);
+          if (
+            Object.values(values).some(
+              (v) => v !== null && !["string", "number", "boolean"].includes(typeof v),
+            )
+          )
+            throw new HttpError(400, "Row values must be text, numbers, true or false, or empty.");
+          return Object.fromEntries(order.filter((k) => k in values).map((k) => [k, values[k]]));
+        });
+        // The same rules as cloud runs: duplicates are skipped, and a run keeps at most
+        // maxRows rows and 10 MB of JSON. Stored rows are keyed in field order, since jsonb reorders keys.
+        const key = (row: Record<string, unknown>) =>
+          JSON.stringify(
+            d.deduplicationKey
+              ? (row[d.deduplicationKey] ?? null)
+              : order.map((k) => row[k] ?? null),
+          );
+        return json(
+          await db.transaction(async (tx) => {
+            await tx.execute(sql`select id from runs where id=${id} for update`);
+            const [current] = await tx.select().from(runs).where(eq(runs.id, id));
+            if (current.status !== "running")
+              throw new HttpError(
+                409,
+                current.status === "canceled" ? "This run was canceled." : "This run has already finished.",
+              );
+            if (Date.now() - (current.startedAt?.getTime() ?? 0) > d.limits.timeoutMs + 30000)
+              throw new HttpError(409, "Run time limit reached");
+            // ponytail: rereads the run's rows for every batch; at most 1,000 rows, so fine until limits grow.
+            const stored = await tx
+              .select({ data: resultRows.data })
+              .from(resultRows)
+              .where(eq(resultRows.runId, id));
+            const seen = new Set(stored.map((s) => key(s.data as Record<string, unknown>)));
+            let size = Buffer.byteLength(JSON.stringify(stored.map((s) => s.data)));
+            const added: Record<string, unknown>[] = [];
+            for (const row of rows) {
+              if (stored.length + added.length >= d.limits.maxRows || size > 10485760) break;
+              if (seen.has(key(row))) continue;
+              seen.add(key(row));
+              added.push(row);
+              size += Buffer.byteLength(JSON.stringify(row)) + 1;
+            }
+            if (added.length)
+              await tx.insert(resultRows).values(
+                added.map((data, i) => ({ runId: id, position: stored.length + i, data })),
+              );
+            const rowCount = stored.length + added.length;
+            await tx.update(runs).set({ rowCount }).where(eq(runs.id, id));
+            return {
+              added: added.length,
+              rowCount,
+              // "rows" ends the run normally; "size" ends it with an error, as in cloud runs.
+              limit: size > 10485760 ? "size" : rowCount >= d.limits.maxRows ? "rows" : null,
+            };
+          }),
+        );
+      }
+      if (action === "finish" && method === "POST") {
+        if (!["succeeded", "failed", "blocked", "canceled"].includes(body.status))
+          throw new HttpError(400, "Invalid run status");
+        const text = (value: unknown, max: number) =>
+          typeof value === "string" && value ? value.slice(0, max) : undefined;
+        const message = text(body.error?.message, 2000);
+        const done = await db.transaction(async (tx) => {
+          const [finished] = await tx
+            .update(runs)
+            .set({
+              // As in cloud runs, a failure after some rows keeps them as a partial result.
+              status: sql`case when ${body.status}::text = 'failed' and ${runs.rowCount} > 0 then 'partial' else ${body.status}::text end`,
+              error: message
+                ? { message, stepId: text(body.error.stepId, 200), url: text(body.error.url, 2048) }
+                : null,
+              durationMs: sql`(extract(epoch from now() - ${runs.startedAt}) * 1000)::int`,
+              finishedAt: new Date(),
+            })
+            .where(and(eq(runs.id, id), eq(runs.status, "running")))
+            .returning();
+          if (!finished) return null;
+          const hooks = await tx
+            .select({ id: webhooks.id })
+            .from(webhooks)
+            .where(eq(webhooks.ownerId, actor.id));
+          // The worker's reconciler sends pending deliveries within 30 seconds.
+          if (hooks.length)
+            await tx
+              .insert(webhookDeliveries)
+              .values(hooks.map((hook) => ({ id: `${id}-${hook.id}`, webhookId: hook.id, runId: id })))
+              .onConflictDoNothing();
+          return finished;
+        });
+        if (!done) throw new HttpError(409, "This run has already finished.");
+        return json(done);
+      }
       if (action === "artifact" && method === "GET") {
         try {
           const content = await new LocalArtifactStore(
@@ -618,8 +817,18 @@ async function handle(
         await redis.set(`cancel:${id}`, "1", "EX", 3600);
         const canceled = await db
           .update(runs)
-          .set({ status: "canceled", finishedAt: new Date() })
-          .where(and(owned(runs, id, actor.id), eq(runs.status, "queued")))
+          .set({
+            status: "canceled",
+            finishedAt: new Date(),
+            durationMs: sql`coalesce((extract(epoch from now() - ${runs.startedAt}) * 1000)::int, 0)`,
+          })
+          // A browser run learns it was canceled the next time it checks in, and stops.
+          .where(
+            and(
+              owned(runs, id, actor.id),
+              sql`(${runs.status} = 'queued' or (${runs.status} = 'running' and ${runs.source} = 'browser'))`,
+            ),
+          )
           .returning();
         if (canceled.length)
           await db

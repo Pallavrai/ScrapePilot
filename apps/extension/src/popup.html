@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ScrapePilot</title>
+    <style>
+      :root {
+        --bg: #f8f9fc;
+        --text: #202733;
+        --muted: #6b7482;
+        --line: #e7eaf0;
+        --purple: #7460df;
+        --light: #f0ecff;
+        --green: #2b9473;
+        --amber: #927247;
+        --red: #b4443c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        width: 360px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.45 system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        padding: 12px 16px;
+        background: #fff;
+        border-bottom: 1px solid var(--line);
+      }
+      header strong {
+        font-size: 15px;
+        letter-spacing: -0.3px;
+      }
+      header strong span {
+        color: var(--purple);
+      }
+      header small {
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      main {
+        display: grid;
+        gap: 12px;
+        padding: 14px 16px 16px;
+      }
+      h2 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p {
+        margin: 0;
+      }
+      .muted,
+      footer {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      section {
+        display: grid;
+        gap: 8px;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      li,
+      .run {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 6px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .row > div {
+        min-width: 0;
+      }
+      .row b {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      button {
+        font: inherit;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--text);
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      button.primary {
+        background: var(--purple);
+        border-color: var(--purple);
+        color: #fff;
+        font-weight: 500;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: 2px;
+      }
+      .link {
+        border: 0;
+        padding: 0;
+        background: none;
+        color: var(--purple);
+      }
+      a {
+        color: var(--purple);
+      }
+      .status {
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 99px;
+        padding: 2px 8px;
+        background: var(--light);
+        color: var(--purple);
+      }
+      .status.succeeded {
+        background: #e7f5ef;
+        color: var(--green);
+      }
+      .status.partial,
+      .status.blocked,
+      .status.canceled {
+        background: #fff6e8;
+        color: var(--amber);
+      }
+      .status.failed {
+        background: #fdeceb;
+        color: var(--red);
+      }
+      .error {
+        color: var(--red);
+      }
+      form {
+        display: grid;
+        gap: 8px;
+        padding-top: 4px;
+        border-top: 1px solid var(--line);
+      }
+      label {
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+      }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      input:not([type="checkbox"]) {
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 6px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>scrapepilot<span>.</span></strong>
+      <small id="account"></small>
+    </header>
+    <main id="app" aria-live="polite"><p class="muted">Loading…</p></main>
+    <script src="popup.js"></script>
+  </body>
+</html>

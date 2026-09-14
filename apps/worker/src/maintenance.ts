@@ -11,13 +11,18 @@ export const deliveryJob = {
 /**
  * Fails runs whose worker died, charges only the time they ran (capped at their
  * reservation) and records their webhook deliveries for reconciliation to send.
+ * Browser runs are not the worker's: they are given up only after 20 minutes, longer
+ * than any run's 15-minute limit, and keep the rows their browser already uploaded.
  */
 export async function failInterruptedRuns(olderThanMinutes: number) {
   await db.execute(sql`
     with lost as (
-      update runs set status = 'failed', finished_at = now(),
-        error = ${JSON.stringify({ message: "The worker stopped during this run. Start the run again." })}::jsonb
-      where status = 'running' and started_at < now() - ${olderThanMinutes}::int * interval '1 minute'
+      update runs set status = case when source = 'browser' and row_count > 0 then 'partial' else 'failed' end, finished_at = now(),
+        error = jsonb_build_object('message', case when source = 'browser'
+          then 'The browser stopped sending updates during this run. Start the run again.'
+          else 'The worker stopped during this run. Start the run again.' end)
+      where status = 'running'
+        and started_at < now() - greatest(${olderThanMinutes}::int, case when source = 'browser' then 20 else 0 end) * interval '1 minute'
       returning id, owner_id, started_at
     ), charged as (
       update usage_events u set kind = 'run',

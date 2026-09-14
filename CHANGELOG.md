@@ -2,6 +2,108 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (night) — Chrome extension: one-click runs stored on the server
+
+### Why
+
+- The owner changed the extension's direction:
+  - It runs saved scrapers in the person's own browser.
+  - Rules and storage stay on the server, so results can be used through the API.
+  - It no longer downloads JSON.
+
+### Changed
+
+- `apps/extension` (new): a Manifest V3 extension, built with esbuild for one server address (`SCRAPEPILOT_URL`).
+  - **Popup:**
+    - Connect, and the saved scrapers with their version and sites.
+    - Run inputs, one-click Run and a live row count.
+    - Stop, and Disconnect, which revokes the extension's key.
+  - **Service worker:**
+    - Starts runs on the server and drives a visible tab: open page, fill, click, choose option, wait for, collect items, next pages and infinite scroll.
+    - Loads at most one page a second.
+    - Stops at HTTP 401, 403 and 429, at CAPTCHA pages, and when a page leaves the allowed domains.
+    - Checks the run's status every 5 seconds, uploads rows and reports the outcome.
+    - A restarted service worker ends its run as failed.
+  - **Page runner:** the cloud engine's `convert()`, required-field rules and item errors. It supports CSS selectors and same-site frames.
+  - **Connect script:** runs only on `/extension/connect`.
+- `apps/web/app/extension/connect/page.tsx` (new): signs the person in if needed, creates a key named "Chrome extension, <date>" and hands it to the extension without showing it.
+- API, in `apps/web/app/api/v1/[...path]/route.ts`:
+  - `POST /scrapers/:id/browser-runs` refuses stored credentials, detail pages, blocked domains and missing inputs.
+  - `POST /runs/:id/rows` stores the rows a run uploads:
+    - It keeps only the scraper's fields with plain values and skips duplicates.
+    - It stops at `maxRows` or 10 MB, and accepts up to 1 MB per request.
+    - It refuses rows once the run has ended or passed its time limit.
+  - `POST /runs/:id/finish` records the outcome.
+    - A failure after some rows is stored as partial.
+    - It sets the duration and records webhook deliveries.
+  - `POST /runs/:id/cancel` also cancels running browser runs.
+  - `GET /scrapers` includes `latestVersion`.
+  - Browser runs use no browser minutes and don't count as the account's active cloud run.
+- `packages/db`: migration `0004_even_mach_iv` adds `runs.source` (`cloud` by default, or `browser`).
+- `apps/worker/src/maintenance.ts`: interrupted-run cleanup gives browser runs at least 20 minutes, so a worker restart doesn't end them, and keeps their uploaded rows as partial. Cloud runs are unchanged.
+- `packages/scraper-engine/src/convert.ts` (new): `convert()` moved out of the Playwright module so both runners share it.
+- `apps/web/lib/server.ts`: `readBody` takes a size limit.
+- Pages:
+  - Run history labels browser runs "In your browser".
+  - The guide has a "Run in your browser" section.
+  - The Privacy Policy has a section on the Chrome extension.
+- Docs:
+  - `README.md` has a Chrome extension section.
+  - `EXTENSION_PLAN.md` is rewritten for the owner's direction, with status, API, permissions and remaining work.
+
+### Verified
+
+- `pnpm typecheck` and `pnpm build` passed.
+- `TEST_DATABASE_URL=... pnpm test`: 98 tests passed across 12 files with PostgreSQL, Redis and Chromium. `tests/extension.test.ts` (8 tests) loads the built extension into Playwright's Chromium and covers:
+  - **Connect:** the handshake with the connect page.
+  - **Search store:** a one-click popup run stored the same 3 rows as a cloud run of the same definition. The run chose an option, filled a box, clicked through to a results page, waited for delayed results and read two pages with a repeated item.
+  - **Infinite scroll:** 9 rows, equal to the cloud run.
+  - **Blocks:** HTTP 429 ends the run as blocked.
+  - **Refusals:** stored credentials, detail pages, a blocked domain and a missing input.
+  - **Row rules:** unknown fields, nested values, duplicates, the row cap, partial on failure, and refusal after finishing.
+  - **Cancel:** a cloud run starts beside a browser run, and canceling from Run history refuses further rows.
+  - **Give-up:** after 20 minutes the rows are kept as partial, and a 10-minute-old browser run keeps running.
+- Through the running app in Chromium: 17 of 17 checks, with a throwaway `@example.test` account deleted afterwards.
+  - Connect opens the real connect page, which asks a signed-out person to sign in.
+  - Signed in, it connects without showing the key and creates one Chrome extension key.
+  - The popup lists the scraper, and one click ran it live on `books.toscrape.com`: 40 rows from 2 pages in 4 seconds.
+  - Run history and the results API show a succeeded browser run with 40 typed rows, labeled In your browser.
+  - Disconnect revoked the key.
+- Found and fixed during testing:
+  - Fields that read the collection item itself (`:scope`) were empty in the extension.
+  - The cleanup change first marked cloud runs with a stored row count as partial.
+
+### Still unverified
+
+- **Browsers:** only Playwright's Chromium was used, not installed Google Chrome, Edge or Brave. Its builds pre-grant sites, so nobody has answered Chrome's per-site permission prompt.
+- **Deployment and logins:** a deployed HTTPS server, and a site the person is signed in to. Runs used public pages and fixtures.
+- **Run conditions:**
+  - Runs longer than a few seconds, and Chrome stopping the service worker mid-run.
+  - Sites that ignore synthetic clicks or value changes.
+  - Single-page-app pagination and same-site frames in the extension.
+- **Webhooks:** deliveries for browser runs are recorded, and sending relies on the worker's reconciler. That path wasn't exercised.
+- **Chrome Web Store:** listing, icons and review.
+
+## 2026-09-14 (evening) — Browser extension plan
+
+### Changed
+
+- `EXTENSION_PLAN.md` (new): the scope for a Chrome extension that lets non-technical users build and run scrapers in their own signed-in browser. It covers:
+  - the architecture, the user's path and the supported steps
+  - what is reused, adapted or rewritten
+  - permissions, backend changes and guardrails
+  - phases with estimates and "done when" criteria, risks, and the owner's open decisions
+  - the codebase facts the plan depends on
+- `CLAUDE.md` points to the plan, and `IMPLEMENTATION_STATUS.md` lists the extension first on the roadmap.
+
+### Verified
+
+- The plan's codebase facts were checked against the code on 2026-09-14: API key authentication, the picker script, which engine functions use Playwright, the result endpoints, and engine limits.
+
+### Still unverified
+
+- Everything in the plan: nothing of the extension is built yet, and the estimates are planning ranges.
+
 ## 2026-09-14 (afternoon) — GitHub Actions: Chromium sandbox and duplicate runs
 
 ### Causes found

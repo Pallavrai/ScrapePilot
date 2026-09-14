@@ -1,0 +1,14 @@
+{
+  "name": "@scrapepilot/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.ts"
+  },
+  "dependencies": {
+    "@scrapepilot/contracts": "workspace:*",
+    "@scrapepilot/scraper-engine": "workspace:*",
+    "esbuild": "0.28.2"
+  }
+}

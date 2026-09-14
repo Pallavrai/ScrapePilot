@@ -8,6 +8,7 @@
     "./artifacts": "./src/artifacts.ts",
     ".": "./src/index.ts",
     "./security": "./src/security.ts",
+    "./convert": "./src/convert.ts",
     "./export": "./src/export.ts"
   },
   "dependencies": {

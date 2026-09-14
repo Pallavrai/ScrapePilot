@@ -31,6 +31,10 @@ Create a scraper using a public URL. Connect the browser worker, switch between 
 
 Use `{{searchTerm}}` for ordinary inputs and `{{secret.password}}` for stored secrets. Credentials are domain-bound and tenant-bound. Export bundles the engine into a portable TypeScript/ESM entrypoint; install the exact Playwright release indicated in its header and provide inputs through environment variables.
 
+## Chrome extension
+
+`apps/extension` runs saved scrapers in a person's own Chrome, with the logins they already have. Scrapers are still built in the editor; definitions, limits, duplicate handling and results stay on the server, so browser runs appear in Run history, the API and webhooks. Build it for your server with `SCRAPEPILOT_URL=https://your-domain pnpm --filter @scrapepilot/extension build` and load `apps/extension/dist` with Load unpacked in `chrome://extensions`. People connect it at `/extension/connect`. `EXTENSION_PLAN.md` describes how runs work and what is left.
+
 ## API
 
 Generate a key in API keys and store the displayed value immediately. Send `Authorization: Bearer sp_...` to `/api/v1` routes. Use `Idempotency-Key` when creating runs. The run endpoints are documented in `IMPLEMENTATION_PLAN.md`. Session-authenticated browser writes additionally require a matching Origin header.

@@ -30,7 +30,7 @@ import {
 } from "./dashboard";
 const pages: Record<string, [string, string]> = {
   scrapers: ["My scrapers", "Turn any page into a repeatable data workflow. No code required."],
-  runs: ["Run history", "Runs from the editor and the API, newest first."],
+  runs: ["Run history", "Runs from the editor, the API and the Chrome extension, newest first."],
   marketplace: ["Explore the marketplace", "Start with a community template. Make it your own."],
   keys: ["API keys", "Start runs and read results from your own code."],
   webhooks: ["Webhooks", "Get notified when runs finish."],

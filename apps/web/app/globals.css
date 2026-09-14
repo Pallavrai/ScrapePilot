@@ -1499,3 +1499,23 @@ th {
   margin: 0;
   font-size: 11px;
 }
+/* Connecting the Chrome extension, and runs it made */
+.connect-page {
+  max-width: 640px;
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  line-height: 1.6;
+}
+.connect-page p {
+  margin: 0;
+}
+.connect-page .meta,
+.run-source {
+  color: var(--muted);
+}
+.run-source {
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}

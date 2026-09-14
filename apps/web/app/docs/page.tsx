@@ -116,6 +116,25 @@ const valid =
         for seven.
       </p>
 
+      <h2>Run in your browser</h2>
+      <p>
+        The ScrapePilot extension for Chrome runs your saved scrapers in your
+        own browser, with the logins you already have there. Install it, choose
+        Connect ScrapePilot and approve the connection on the page that opens.
+        Then open the extension from Chrome&apos;s toolbar and choose Run next
+        to a scraper. Chrome asks once for access to the scraper&apos;s sites.
+      </p>
+      <p>
+        The run opens a tab you can watch, loads at most one page per second and
+        stops at CAPTCHA checks and HTTP 401, 403 and 429 answers. Rows upload to
+        your account as they are collected, with the same limits and duplicate
+        handling as cloud runs, so results appear in Run history, the API and
+        webhooks, marked In your browser. Stop run in the extension or Cancel in
+        Run history ends it. Browser runs use no browser minutes. They
+        don&apos;t fill in stored credentials or open detail pages yet, and they
+        need CSS selectors and same-site frames; run those scrapers in the cloud.
+      </p>
+
       <h2>Run on your computer</h2>
       <p>
         Download for your computer saves the scraper&apos;s latest saved

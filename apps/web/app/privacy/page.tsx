@@ -68,6 +68,28 @@ export default function Privacy() {
         Scrapers you download and run on your own computer send nothing back to
         ScrapePilot. Their logins and results stay on that computer.
       </p>
+      <h3>The Chrome extension</h3>
+      <ul>
+        <li>
+          When you connect it, the extension stores its own API key in your
+          browser. You can revoke it under API keys or by choosing Disconnect.
+        </li>
+        <li>
+          It opens and reads pages only when you start a run, and only on the
+          sites that scraper is allowed to visit, after you let Chrome grant
+          access to them.
+        </li>
+        <li>
+          It sends ScrapePilot the rows the scraper collects and the run&apos;s
+          status, error message and the address of the page where a run
+          stopped. These are stored like any other run.
+        </li>
+        <li>
+          It does not send cookies, passwords, your browsing history or pages
+          outside a run, and it never fills in logins you stored with
+          ScrapePilot.
+        </li>
+      </ul>
       <h2>Personal data in your results</h2>
       <p>
         You choose which websites to automate and what your scrapers collect.
@@ -117,7 +139,8 @@ export default function Privacy() {
         <li>
           The websites your scrapers visit. They receive requests from our
           servers, including any values your steps enter, such as a login you
-          stored for that site.
+          stored for that site. Runs from the Chrome extension reach those sites
+          from your own browser instead, with your own connection and logins.
         </li>
         <li>
           The webhook addresses you register, which receive each run’s ID,

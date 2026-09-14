@@ -10,14 +10,19 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 - BullMQ runs, usage reservations, cancellation, failure artifacts, a downloadable scraper that runs on the user's computer with their own browser profile, encrypted domain-bound secrets and seven-day browser sessions.
 - Marketplace submission validation, administrator review, private pinned installation, metadata, reports, domain blocks and audit records.
 - Sandboxed non-root Chromium, restricted Docker egress proxy, public-IP/DNS validation, signed bounded-retry webhooks with PostgreSQL delivery records and queue reconciliation, retention, metrics, backup/restore scripts.
-- Four Drizzle migrations (18 tables), Docker Compose and CI with PostgreSQL, Redis and Chromium installation.
+- A Chrome extension (`apps/extension`) that runs saved scrapers in the person's own browser with one click. Rows upload to their account under the server's rules and appear in Run history, the API and webhooks. See `EXTENSION_PLAN.md`.
+- Five Drizzle migrations (18 tables), Docker Compose and CI with PostgreSQL, Redis and Chromium installation.
 
 ## Verified locally
 
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed; production Next.js pages and API routes compile.
 - GitHub Actions Verify on `ubuntu-latest` (2026-09-14, pull request #2): typecheck, migrations, all tests with PostgreSQL, Redis and sandboxed Chromium, and the build passed.
-- `TEST_DATABASE_URL=... pnpm test`: 90 tests passed across eleven files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`). Without `TEST_DATABASE_URL` the three integration files are skipped, which is not a full result.
+- `TEST_DATABASE_URL=... pnpm test`: 98 tests passed across twelve files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`). Without `TEST_DATABASE_URL` the four integration files are skipped, which is not a full result.
+- Chrome extension (2026-09-14):
+  - `tests/extension.test.ts` loads the built extension into Playwright's Chromium. It covers the connect handshake, popup runs that store the same rows as cloud runs (search form, two pages, infinite scroll), and HTTP 429 blocks. It also covers the server's refusals and row rules, cancellation, and the 20-minute give-up.
+  - Through the running app, 17 of 17 checks: the real connect page, a one-click live run on `books.toscrape.com` (40 rows from 2 pages), Run history labeling, and Disconnect.
+  - Not tried in installed Chrome, against a deployed server or on a signed-in site.
 - Fault injection (2026-09-14):
   - Webhook signatures checked the way receivers are told to check them; real BullMQ retries ending delivered or failed; refused private and non-HTTPS destinations; revoked orphan deliveries; outbox reconciliation of pending deliveries and queued runs.
   - Crashed-run usage settlement; the 429 quota refusal; result and screenshot retention.
@@ -39,7 +44,7 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
   - Diff review and apply, then a run with the new field.
   - Broken-selector failure shown in Run history, Repair / edit, and a repaired run.
 - Tests include signup verification/reset, tenant separation, API key ownership, immutable versions, idempotency, cancellation, marketplace approval/install, credential handling, URL security, field conversion, portable export, dynamic search/detail extraction, selector fallbacks, HTTP 403 handling, and pagination ending without a next button.
-- All four Drizzle migrations applied to the isolated local test database.
+- All five Drizzle migrations applied to the isolated local test database.
 - Docker worker image built. A non-root container with all capabilities dropped, no-new-privileges, the checked-in seccomp profile and `chromiumSandbox: true` rendered a page successfully.
 - Docker Compose on Docker Desktop (2026-09-14): 25 of 25 smoke checks passed on images built from the restructured Dockerfile. They covered HTTPS, auth, proxied runs, webhook delivery attempts, network boundaries, concurrency, cancellation, restart recovery and the editor over WSS (see `CHANGELOG.md`). A code-only rebuild took 65 s with no downloads.
 - Dashboard screenshot reviewed locally at `artifacts/workspace.png` (ignored artifact).
@@ -62,15 +67,21 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 5. Measure two concurrent runs on the intended VPS, including browser memory reserve, queue/stream latency and cancellation. Actual click-driven navigation accounting and adaptive SPA pagination need further acceptance coverage.
 6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Fill in the operator details in `apps/web/components/legal.tsx` and have the draft Terms, Privacy Policy and Acceptable Use Policy reviewed. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
 7. Startup lease cleanup and crash usage settlement assume a single worker process; key leases by worker id before running more than one. A crashed session is charged until the worker starts again, capped at its reservation.
+8. Chrome extension, verified only in Playwright's Chromium with builds that pre-grant sites. Still to do:
+   - Load it in installed Chrome against a deployed server, answer the per-site permission prompt, and run a scraper on a site the owner is allowed to use while signed in.
+   - Check a run of several minutes, including Chrome stopping the service worker.
+   - Check webhook delivery for a browser run.
+   - Prepare the Chrome Web Store listing.
 
 ## Roadmap (2026-09-14)
 
-Done: dashboard completeness and reliability; editor features and the template lifecycle; worker fault recovery and coverage; local Docker Compose verification; dialog focus, nested frames and test cleanup; single-page-app pagination with block and duplicate fixtures; draft Terms, Privacy and Acceptable Use pages; local runs with the user's own browser profile (see `CHANGELOG.md`).
+Done: dashboard completeness and reliability; editor features and the template lifecycle; worker fault recovery and coverage; local Docker Compose verification; dialog focus, nested frames and test cleanup; single-page-app pagination with block and duplicate fixtures; draft Terms, Privacy and Acceptable Use pages; local runs with the user's own browser profile; the Chrome extension's first slice, with one-click runs stored on the server (see `CHANGELOG.md`).
 
 Next, in order:
 
-1. Decide whether runs should report diagnostics: duplicate rows skipped, and a row count far below the previous run. Neither exists yet.
-2. Operator only: VPS capacity measurement, domain and TLS, a Resend sending domain, off-host backups with a restore rehearsal, a live HTTPS/WSS smoke test, and legal review of the draft Terms, Privacy Policy and Acceptable Use Policy.
+1. Chrome extension: follow "Remaining work" in `EXTENSION_PLAN.md`. Start with installed Chrome against a deployed server, then the store listing. The owner's open decisions are listed there.
+2. Decide whether runs should report diagnostics: duplicate rows skipped, and a row count far below the previous run. Neither exists yet.
+3. Operator only: VPS capacity measurement, domain and TLS, a Resend sending domain, off-host backups with a restore rehearsal, a live HTTPS/WSS smoke test, and legal review of the draft Terms, Privacy Policy and Acceptable Use Policy.
 
 ## Local continuation
 

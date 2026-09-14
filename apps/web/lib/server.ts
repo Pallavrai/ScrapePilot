@@ -38,7 +38,7 @@ export async function identity(req: Request) {
     throw new HttpError(403, "Invalid request origin");
   return u;
 }
-export async function readBody(req:Request){const reader=req.body?.getReader();if(!reader)return {};const parts:Uint8Array[]=[];let size=0;for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>131072){await reader.cancel();throw new HttpError(413,'Request body is too large');}parts.push(value);}try{return JSON.parse(Buffer.concat(parts).toString('utf8'))}catch{throw new HttpError(400,'Invalid JSON body')}}
+export async function readBody(req:Request,limit=131072){const reader=req.body?.getReader();if(!reader)return {};const parts:Uint8Array[]=[];let size=0;for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>limit){await reader.cancel();throw new HttpError(413,'Request body is too large');}parts.push(value);}try{return JSON.parse(Buffer.concat(parts).toString('utf8'))}catch{throw new HttpError(400,'Invalid JSON body')}}
 let instance: Queue | undefined;
 export const getQueue = () =>
   (instance ??= new Queue("runs", {

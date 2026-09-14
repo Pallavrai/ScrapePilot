@@ -276,6 +276,9 @@ export function RunsTable({
                 </td>
                 <td>
                   <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+                  {r.source === "browser" && (
+                    <small className="run-source">In your browser</small>
+                  )}
                   {r.error?.message && (
                     <small className="run-error">
                       {String(r.error.message).split("\n")[0]}
