@@ -133,10 +133,17 @@ export async function protectContext(
   context: BrowserContext,
   domains: string[],
   blocked: (domain: string) => Promise<boolean> = async () => false,
+  proxied = false,
 ) {
+  // Behind the egress proxy the worker has no DNS; the proxy resolves, checks and pins every address.
+  const resolver = proxied ? null : undefined;
   await context.routeWebSocket("**/*", async (socket) => {
     try {
-      const u = await assertPublicUrl(socket.url().replace(/^ws/, "http"));
+      const u = await assertPublicUrl(
+        socket.url().replace(/^ws/, "http"),
+        undefined,
+        resolver,
+      );
       if (await blocked(u.hostname)) throw new Error("Blocked domain");
       socket.connectToServer();
     } catch {
@@ -149,6 +156,7 @@ export async function protectContext(
       const u = await assertPublicUrl(
         req.url(),
         req.isNavigationRequest() ? domains : undefined,
+        resolver,
       );
       if (await blocked(u.hostname))
         throw new Error("Domain blocked by administrator");
@@ -198,7 +206,12 @@ export async function execute(
     acceptDownloads: false,
     storageState: options.storageState,
   });
-  await protectContext(context, d.allowedDomains, options.blocked);
+  await protectContext(
+    context,
+    d.allowedDomains,
+    options.blocked,
+    !!options.proxy,
+  );
   await options.prepareContext?.(context);
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
@@ -230,7 +243,11 @@ export async function execute(
   const go = async (p: Page, url: string) => {
     check();
     if (++pages > d.limits.maxPages) throw new Error("Page limit reached");
-    await assertPublicUrl(url, d.allowedDomains);
+    await assertPublicUrl(
+      url,
+      d.allowedDomains,
+      options.proxy ? null : undefined,
+    );
     await options.beforeNavigation?.(url);
     for (let attempt = 0; attempt < 3; attempt++) {
       try {

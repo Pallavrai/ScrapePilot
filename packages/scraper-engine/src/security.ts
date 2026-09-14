@@ -19,7 +19,8 @@ export function publicIp(ip: string) {
 export async function assertPublicUrl(
   value: string,
   domains?: string[],
-  resolver = lookup,
+  // null when the browser goes through the egress proxy, which resolves, checks and pins every address.
+  resolver: typeof lookup | null = lookup,
 ) {
   const u = new URL(value);
   if (
@@ -32,6 +33,7 @@ export async function assertPublicUrl(
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (domains && !domains.some((d) => host === d.toLowerCase()))
     throw new Error("Domain is not declared in this scraper");
+  if (!resolver) return u;
   const addresses = await resolver(host, { all: true });
   if (!addresses.length || addresses.some((a) => !publicIp(a.address)))
     throw new Error("Private or reserved network address forbidden");

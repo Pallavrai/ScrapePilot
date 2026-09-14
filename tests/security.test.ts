@@ -44,6 +44,17 @@ describe("network boundaries", () => {
       assertPublicUrl("https://example.com.attacker.com", ["example.com"]),
     ).rejects.toThrow();
   });
+  it("leaves DNS to the egress proxy but still checks scheme, port and domain", async () => {
+    await expect(
+      assertPublicUrl("https://no-dns-here.example/a", ["no-dns-here.example"], null),
+    ).resolves.toBeInstanceOf(URL);
+    await expect(
+      assertPublicUrl("https://other.example/", ["no-dns-here.example"], null),
+    ).rejects.toThrow("not declared");
+    await expect(
+      assertPublicUrl("https://no-dns-here.example:8443/", undefined, null),
+    ).rejects.toThrow("port");
+  });
 });
 describe("credential handling", () => {
   it("authenticates ciphertext and tenant binding", () => {

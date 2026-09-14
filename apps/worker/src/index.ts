@@ -52,6 +52,9 @@ const connection = {
   password: process.env.REDIS_PASSWORD || undefined,
 };
 const redis = new Redis({ ...connection, maxRetriesPerRequest: null });
+// In Compose the worker has no route or DNS to the internet; the egress proxy resolves and
+// checks every destination, so URL checks here skip the DNS lookup when a proxy is set.
+const viaProxy = process.env.BROWSER_PROXY ? null : undefined;
 const app = Fastify({
   logger: {
     redact: [
@@ -485,7 +488,12 @@ app.get("/browser", { websocket: true }, (socket, req) => {
               serviceWorkers: "block",
               acceptDownloads: false,
             });
-            await protectContext(context, definition.allowedDomains, blocked);
+            await protectContext(
+              context,
+              definition.allowedDomains,
+              blocked,
+              !!process.env.BROWSER_PROXY,
+            );
             const [saved] = await db
               .select()
               .from(browserSessions)
@@ -535,7 +543,11 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             send({ type: "ready" });
             const first = definition.steps.find((s) => s.type === "navigate");
             if (first?.type === "navigate" && !first.url.includes("{{")) {
-              await assertPublicUrl(first.url, definition.allowedDomains);
+              await assertPublicUrl(
+                first.url,
+                definition.allowedDomains,
+                viaProxy,
+              );
               await throttle(first.url);
               await page
                 .goto(first.url, { waitUntil: "domcontentloaded" })
@@ -578,7 +590,7 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             });
           }
           if (msg.type === "navigate") {
-            await assertPublicUrl(msg.url, allowedDomains).catch((e: Error) => {
+            await assertPublicUrl(msg.url, allowedDomains, viaProxy).catch((e: Error) => {
               throw new Error(
                 e.message === "Domain is not declared in this scraper"
                   ? `${new URL(msg.url).hostname} is not an allowed domain for this scraper (allowed: ${allowedDomains.join(", ")}). Add it to allowedDomains in Definition if you are authorized to automate it.`

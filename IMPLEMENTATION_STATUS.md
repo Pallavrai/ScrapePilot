@@ -35,17 +35,21 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 - Tests include signup verification/reset, tenant separation, API key ownership, immutable versions, idempotency, cancellation, marketplace approval/install, credential handling, URL security, field conversion, portable export, dynamic search/detail extraction, selector fallbacks, HTTP 403 handling, and pagination ending without a next button.
 - All four Drizzle migrations applied to the isolated local test database.
 - Docker worker image built. A non-root container with all capabilities dropped, no-new-privileges, the checked-in seccomp profile and `chromiumSandbox: true` rendered a page successfully.
+- Docker Compose on Docker Desktop (2026-09-14): 23 of 24 smoke checks passed with the worker DNS fix applied in place. They covered HTTPS, auth, proxied runs, webhook delivery attempts, network boundaries, concurrency, cancellation, restart recovery and the editor over WSS (see `CHANGELOG.md`). Images from the restructured Dockerfile build but are not yet smoke-tested.
 - Dashboard screenshot reviewed locally at `artifacts/workspace.png` (ignored artifact).
 
 ## Remaining acceptance work
 
 1. Visual builder in Chromium is verified through these features: selection, collections, Preview, Run, next-page and detail pages, recorded Fill/Click/Choose option steps, stored credentials and saved sessions, infinite scroll, delayed pages, and the two-account template lifecycle through version-2 repair. Not verified: Safari and Firefox, and keyboard focus trapping in dialogs.
 2. Expand controlled fixtures for nested frames, duplicate-row health diagnostics, changed row counts, 429/CAPTCHA blocks and delayed SPA pagination. Target login and session restoration are verified only against the public `quotes.toscrape.com` sandbox. First-level frame selection exists; nested-frame selection is not complete.
-3. Fault handling is covered in process: webhook signatures, retries and outbox recovery, crashed-run settlement, quota refusal, retention, and egress pinning against DNS rebinding. Not yet covered:
-   - Delivery to a real HTTPS receiver.
-   - The webhook and egress processes running in Compose, with Chromium routed through the proxy.
-   - BullMQ recovering a job from a killed worker process.
-4. Verify full Docker Compose startup and the production web container after the final source changes; the successful container smoke test covered Chromium startup, not the entire deployment.
+3. Fault handling is covered in two places:
+   - In process: webhook signatures, retries and outbox recovery, crashed-run settlement, quota refusal, retention, and egress pinning against DNS rebinding.
+   - In Compose: webhook delivery over HTTPS, proxy refusals, Chromium routed through the proxy, and restart recovery.
+
+   Not yet covered:
+   - Delivery to a receiver that accepts it; the Compose check reached example.com, which rejected it.
+   - BullMQ re-running a job after its worker process was killed.
+4. Compose starts and passes the smoke test locally on Docker Desktop (arm64) with a local certificate. Repeat it with images from the restructured Dockerfile, then on the Linux VPS with the real domain, certificate and email.
 5. Measure two concurrent runs on the intended VPS, including browser memory reserve, queue/stream latency and cancellation. Actual click-driven navigation accounting and adaptive SPA pagination need further acceptance coverage.
 6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
 7. Startup lease cleanup and crash usage settlement assume a single worker process; key leases by worker id before running more than one. A crashed session is charged until the worker starts again, capped at its reservation.
@@ -57,7 +61,7 @@ Done: dashboard completeness and reliability; editor features and the template l
 Next, in order:
 
 1. Smaller items: keyboard focus trapping in dialogs, nested-frame selection, and cleanup of integration-test users.
-2. Needs operator approval: a full Docker Compose run (image pulls including Chromium), which also exercises the webhook and egress processes, and WebKit and Firefox downloads for cross-browser checks.
+2. Finish the local Compose check: the smoke test against images from the restructured Dockerfile, and a code-only rebuild without downloads. WebKit and Firefox checks are not planned; the owner chose not to download those browsers.
 3. Operator only: VPS capacity measurement, domain and TLS, a Resend sending domain, off-host backups with a restore rehearsal, and a live HTTPS/WSS smoke test.
 
 ## Local continuation

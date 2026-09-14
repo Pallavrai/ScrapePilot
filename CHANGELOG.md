@@ -2,6 +2,49 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (night) — Docker Compose verification
+
+### Causes found
+
+- **No runs in Compose:** the worker container is on an internal-only network, which cannot resolve public names. The worker still looked up each target's address itself before handing traffic to the egress proxy. Every run failed within a second with `getaddrinfo EAI_AGAIN`, and editor sessions could not open their first page.
+- **Every rebuild downloaded everything again:** the Dockerfile copied the source before `pnpm install`, so any code change repeated the package install and the Chromium and system-library download. The worker image also held Chromium twice (4.59 GB).
+
+### Changed
+
+- `packages/scraper-engine/src/security.ts`: `assertPublicUrl` accepts `null` as the resolver to skip the DNS lookup. Scheme, credential, port and allowed-domain checks still apply.
+- `packages/scraper-engine/src/index.ts` and `apps/worker/src/index.ts`: with `BROWSER_PROXY` set, run navigation, the request and WebSocket guards, and editor sessions skip that lookup. The egress proxy resolves, checks every answer and pins the address, and the worker has no other route out. Without a proxy (local development) the lookup still runs.
+- `Dockerfile`:
+  - Packages are fetched from the lockfile before the source is copied, then installed offline.
+  - Chromium and its system libraries are installed in their own stage, keyed to the Playwright version pinned by the engine, and the worker copies the built app into it.
+  - The web, webhooks and egress images do not contain Chromium.
+- `tests/security.test.ts`: without DNS, undeclared domains and other ports are still refused.
+
+### Verified
+
+Docker Desktop (arm64), with a separate Compose project and a throwaway env file (generated keys, no email key).
+
+- **Before the fix:** all 3 runs failed with `EAI_AGAIN`.
+- **With the fix copied into the running worker:** 23 of 24 smoke checks passed.
+  - **Startup and access:** migrations, all seven services, HTTPS through Caddy's local certificate authority, the HTTP redirect, and sign-up and sign-in.
+  - **Runs:**
+    - A run in the container's Chromium through the egress proxy returned 5 books.
+    - Two runs on different sites ran at once, with a worker peak of 408 MiB.
+    - A run was cancelled.
+    - A worker restart mid-run failed that run with a clear message and charged 4.9 s.
+  - **Webhooks:** the webhooks service delivered over HTTPS. example.com rejected it, so it retried and recorded the delivery as failed.
+  - **Network boundaries:** the worker has no direct internet access. The proxy refused the metadata address, Postgres, Redis and port 22.
+  - **Editor:** it connected over `wss://localhost/browser`, frames arrived, and Chromium ran with its sandbox on.
+  - **The one failure:** the test clicked where the host's fonts put the title, which is not where the container draws it. The test now measures inside the container.
+- **Restructured Dockerfile:** all four images built in 201 s; the worker image is 2.84 GB.
+- **Local checks:** `pnpm typecheck` passed; `TEST_DATABASE_URL=… pnpm test` passed 82 of 82.
+
+### Still unverified
+
+- The smoke test against the rebuilt images.
+- That a code-only rebuild downloads nothing.
+- A webhook receiver that accepts deliveries.
+- A Linux VPS, a public domain certificate and real email.
+
 ## 2026-09-14 (evening) — Worker fault recovery and coverage
 
 ### Causes found
