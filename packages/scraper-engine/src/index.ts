@@ -297,13 +297,22 @@ export async function execute(
               .first()
               .selectOption(interpolate(s.value, values, secret));
             break;
-          case "waitFor":
-            await (
-              await locate(page, s.locator)
-            )
+          case "waitFor": {
+            // Late content is the reason for this step, so it may wait longer than locate's 5 seconds.
+            const scope = s.locator.frame ? page.frameLocator(s.locator.frame) : page;
+            const target = [s.locator.primary, ...s.locator.fallbacks]
+              .map((selector) => scope.locator(selector))
+              .reduce((all, next) => all.or(next));
+            await target
               .first()
-              .waitFor({ state: "visible" });
+              .waitFor({ state: "visible", timeout: 30000 })
+              .catch((e) => {
+                throw e instanceof Error && e.name === "TimeoutError"
+                  ? new Error(`Waited 30 seconds, but nothing matched "${s.locator.primary}"`)
+                  : e;
+              });
             break;
+          }
           case "extractCollection": {
             const collection = await locate(page, s.container);
             const count = await collection.count();
@@ -381,10 +390,21 @@ export async function execute(
           await next.first().click();
           await page.waitForLoadState("domcontentloaded");
         } else {
+          const collection = d.steps.find((s) => s.type === "extractCollection");
+          const items = async () =>
+            collection?.type === "extractCollection"
+              ? locate(page, collection.container, false).then(
+                  (l) => l.count(),
+                  () => 0,
+                )
+              : 0;
+          const known = await items();
           await page.evaluate(() =>
             window.scrollTo(0, document.body.scrollHeight),
           );
-          await page.waitForTimeout(750);
+          // More items load asynchronously: wait up to 5 seconds for them instead of a fixed pause.
+          for (const end = Date.now() + 5000; Date.now() < end && (await items()) <= known; )
+            await page.waitForTimeout(250);
         }
         await processSteps(true);
         if (rows.length === before) break;

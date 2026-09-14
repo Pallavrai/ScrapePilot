@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import {
   Layers,
@@ -19,6 +19,27 @@ import {
 } from "lucide-react";
 import { Badge, EmptyState } from "@scrapepilot/ui";
 import AuthDialog, { authClient, type FormNotice } from "./auth-dialog";
+import {
+  KeysPanel,
+  MarketplaceGrid,
+  ReviewQueue,
+  RunsTable,
+  ScraperCards,
+  SecretsPanel,
+  type Act,
+} from "./dashboard";
+const pages: Record<string, [string, string]> = {
+  scrapers: ["My scrapers", "Turn any page into a repeatable data workflow. No code required."],
+  runs: ["Run history", "Runs from the editor and the API, newest first."],
+  marketplace: ["Explore the marketplace", "Start with a community template. Make it your own."],
+  keys: ["API keys", "Start runs and read results from your own code."],
+  webhooks: ["Webhooks", "Get notified when runs finish."],
+  secrets: ["Credentials", "Encrypted logins your scrapers can fill in, each bound to one domain."],
+  "admin/listings": ["Review queue", "Approve or reject marketplace templates."],
+  "admin/users": ["Users & quotas", "Suspend accounts and set monthly browser minutes."],
+  "admin/domains": ["Domain policies", "Block domains that no scraper may open."],
+  "admin/reports": ["Abuse reports", "Reports about published templates."],
+};
 const Builder = dynamic(() => import("./builder"), {
   ssr: false,
   loading: () => <div className="empty">Opening editor…</div>,
@@ -49,16 +70,24 @@ export default function Workspace() {
     [query, setQuery] = useState("");
   const setLogin = (open: boolean) =>
     setAuthDialog(open ? { mode: "signin" } : null);
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const refresh = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    const requested = tab;
+    // A slower response for a tab the user already left must not replace the current tab's rows.
+    const current = () => tabRef.current === requested;
     try {
-      setActor(await api("me"));
-      setItems(await api(tab));
+      const me = await api("me");
+      const rows = await api(requested);
+      if (!current()) return;
+      setActor(me);
+      setItems(rows);
       setError("");
     } catch (e) {
-      setError((e as Error).message);
+      if (current()) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [tab]);
   useEffect(() => {
@@ -85,6 +114,30 @@ export default function Workspace() {
     setAuthDialog({ mode: "signin", notice });
     history.replaceState(null, "", location.pathname);
   }, []);
+  // One way to change tabs: clears the previous tab's rows (their shape differs) and reloads
+  // even when the current tab is clicked again, which would otherwise not trigger a refresh.
+  function go(key: string) {
+    setSelected(null);
+    setNotice("");
+    if (key === tab) return void refresh();
+    setItems([]);
+    setLoading(true);
+    setTab(key);
+  }
+  const act: Act = async (work, success) => {
+    try {
+      await work();
+      // Refresh first, so a message like "Deleted" never shows next to the item it removed.
+      await refresh(true);
+      setError("");
+      if (success) setNotice(success);
+      return true;
+    } catch (e) {
+      setNotice("");
+      setError((e as Error).message);
+      return false;
+    }
+  };
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -130,10 +183,7 @@ export default function Workspace() {
             <button
               key={key}
               className={tab === key ? "active" : ""}
-              onClick={() => {
-                setSelected(null);
-                setTab(key);
-              }}
+              onClick={() => go(key)}
             >
               <Icon size={18} />
               {label}
@@ -142,10 +192,7 @@ export default function Workspace() {
           ))}
           {actor?.role === "admin" && (
             <button
-              onClick={() => {
-                setTab("admin/listings");
-                setSelected(null);
-              }}
+              onClick={() => go("admin/listings")}
             >
               <ShieldCheck size={18} />
               Review queue
@@ -161,10 +208,7 @@ export default function Workspace() {
             ].map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => {
-                  setTab(key);
-                  setSelected(null);
-                }}
+                onClick={() => go(key)}
               >
                 <ShieldCheck size={16} />
                 {label}
@@ -177,9 +221,24 @@ export default function Workspace() {
             <span className="green-dot" /> FREE BETA
             <p>Build something useful.</p>
             <small>
-              {actor?.monthlyMinutes ?? 100} browser minutes / month
+              {actor
+                ? `${actor.usedMinutes ?? 0} of ${actor.monthlyMinutes} browser minutes used`
+                : "100 browser minutes / month"}
             </small>
-            <div className="usage-track" />
+            <div
+              className="usage-track"
+              role="progressbar"
+              aria-label="Browser minutes used this month"
+              aria-valuemin={0}
+              aria-valuemax={actor?.monthlyMinutes ?? 100}
+              aria-valuenow={actor?.usedMinutes ?? 0}
+            >
+              <i
+                style={{
+                  width: `${Math.min(100, ((actor?.usedMinutes ?? 0) / Math.max(1, actor?.monthlyMinutes ?? 100)) * 100)}%`,
+                }}
+              />
+            </div>
             <span>Usage is enforced on every run</span>
           </div>
           <button
@@ -206,9 +265,7 @@ export default function Workspace() {
         <header className="topbar">
           <span>
             Workspace <ChevronRight size={13} />{" "}
-            {selected
-              ? "Visual editor"
-              : (nav.find((n) => n[0] === tab)?.[2] ?? "Administration")}
+            {selected ? "Visual editor" : (pages[tab]?.[0] ?? "Administration")}
           </span>
           <div>
             <span className="status-dot" /> Free beta{" "}
@@ -230,26 +287,8 @@ export default function Workspace() {
             <div className="page-heading">
               <div>
                 <div className="eyebrow">YOUR DATA, YOUR WAY</div>
-                <h1>
-                  {tab === "scrapers"
-                    ? "My scrapers"
-                    : tab === "runs"
-                      ? "Run history"
-                      : tab === "marketplace"
-                        ? "Explore the marketplace"
-                        : tab === "keys"
-                          ? "API keys"
-                          : tab === "secrets"
-                            ? "Credentials"
-                            : "Review queue"}
-                </h1>
-                <p>
-                  {tab === "scrapers"
-                    ? "Turn any page into a repeatable data workflow. No code required."
-                    : tab === "marketplace"
-                      ? "Start with a community template. Make it your own."
-                      : "Manage your workspace with everything in one place."}
-                </p>
+                <h1>{pages[tab]?.[0]}</h1>
+                <p>{pages[tab]?.[1]}</p>
               </div>
               {!actor && (
                 <button className="primary" onClick={() => setLogin(true)}>
@@ -368,303 +407,51 @@ export default function Workspace() {
               "admin/domains",
               "admin/reports",
             ].includes(tab) ? (
-              <Settings section={tab} />
+              <Settings key={tab} section={tab} />
             ) : loading ? (
               <div className="empty">Loading workspace…</div>
             ) : tab === "scrapers" ? (
-              <div className="scraper-grid">
-                {items
-                  .filter((s) =>
-                    s.name?.toLowerCase().includes(query.toLowerCase()),
-                  )
-                  .map((s) => (
-                    <button
-                      className="scraper-card"
-                      key={s.id}
-                      onClick={() => setSelected(s.id)}
-                    >
-                      <div className="card-top">
-                        <span className="site-icon">
-                          <Layers size={22} />
-                        </span>
-                        <Badge>Draft</Badge>
-                      </div>
-                      <h3>{s.name}</h3>
-                      <p>{s.draft?.allowedDomains?.join(", ")}</p>
-                      <footer>
-                        <span>{s.draft?.steps?.length ?? 0} steps</span>
-                        <ArrowUpRight size={17} />
-                      </footer>
-                    </button>
-                  ))}
-                <button
-                  className="new-card"
-                  onClick={() =>
-                    actor
-                      ? document
-                          .querySelector<HTMLInputElement>("input[name=url]")
-                          ?.focus()
-                      : setLogin(true)
-                  }
-                >
-                  <span>
-                    <Plus size={22} />
-                  </span>
-                  <h3>Create a new scraper</h3>
-                  <p>Start with a URL. Build visually.</p>
-                </button>
-              </div>
-            ) : tab === "marketplace" ? (
-              <div className="scraper-grid">
-                {items.map((s) => (
-                  <div className="scraper-card" key={s.id}>
-                    <Badge tone="green">Community template</Badge>
-                    <h3>{s.name}</h3>
-                    <p>{s.description}</p>
-                    <button
-                      className="primary"
-                      onClick={async () => {
-                        try {
-                          const installed = await api(
-                            `marketplace/${s.id}/install`,
-                            "POST",
-                            {},
-                          );
-                          setSelected(installed.id);
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
-                      }}
-                    >
-                      Install template <Plus size={15} />
-                    </button>
-                    <small>{s.installCount} installs</small>
-                  </div>
-                ))}
-                {!items.length && (
-                  <EmptyState title="A fresh marketplace">
-                    Reviewed community templates will appear here.
-                  </EmptyState>
-                )}
-              </div>
-            ) : tab === "keys" ? (
-              <>
-                <button
-                  className="primary"
-                  onClick={async () => {
-                    try {
-                      const k = await api("keys", "POST", {
-                        name: "Workspace key",
-                      });
-                      setNotice(
-                        `Copy this key now; it will not be shown again: ${k.token}`,
-                      );
-                      await refresh();
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  Generate API key <Plus size={16} />
-                </button>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Prefix</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((k) => (
-                        <tr key={k.id}>
-                          <td>{k.name}</td>
-                          <td>
-                            <code>{k.prefix}…</code>
-                          </td>
-                          <td>
-                            <button
-                              onClick={async () => {
-                                await api(`keys/${k.id}`, "DELETE");
-                                await refresh();
-                              }}
-                            >
-                              Revoke
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : tab === "secrets" ? (
-              <>
-                <form
-                  className="inline-form"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const form = e.currentTarget;
-                    const f = new FormData(form);
-                    try {
-                      await api("secrets", "POST", Object.fromEntries(f));
-                      form.reset();
-                      await refresh();
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  <input name="domain" placeholder="example.com" required />
-                  <input name="name" placeholder="Secret name" required />
-                  <input
-                    name="value"
-                    type="password"
-                    placeholder="Secret value"
-                    required
-                  />
-                  <button className="primary">Save credential</button>
-                </form>
-                {items.map((s) => (
-                  <div className="list-row" key={s.id}>
-                    <b>{s.name}</b>
-                    <span>{s.domain}</span>
-                    <button
-                      onClick={async () => {
-                        await api(`secrets/${s.id}`, "DELETE");
-                        await refresh();
-                      }}
-                    >
-                      Revoke
-                    </button>
-                  </div>
-                ))}
-              </>
+              <ScraperCards
+                items={items}
+                query={query}
+                act={act}
+                onOpen={setSelected}
+                onNew={() =>
+                  actor
+                    ? document
+                        .querySelector<HTMLInputElement>("input[name=url]")
+                        ?.focus()
+                    : setLogin(true)
+                }
+              />
             ) : tab === "runs" ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Run</th>
-                      <th>Status</th>
-                      <th>Rows</th>
-                      <th>Duration</th>
-                      <th>Created</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((r) => (
-                      <tr key={r.id}>
-                        <td>
-                          <code>{r.id.slice(0, 8)}</code>
-                        </td>
-                        <td>
-                          <Badge
-                            tone={
-                              r.status === "succeeded" ? "green" : "neutral"
-                            }
-                          >
-                            {r.status}
-                          </Badge>
-                        </td>
-                        <td>{r.rowCount}</td>
-                        <td>{Math.round(r.durationMs / 1000)}s</td>
-                        <td>{new Date(r.createdAt).toLocaleString()}</td>
-                        <td>
-                          <button
-                            onClick={async () => {
-                              const data = await api(`runs/${r.id}/results`);
-                              setNotice(JSON.stringify(data.rows, null, 2));
-                            }}
-                          >
-                            View JSON
-                          </button>
-                          {["queued", "running"].includes(r.status) ? (
-                            <button
-                              onClick={async () => {
-                                await api(`runs/${r.id}/cancel`, "POST", {});
-                                await refresh();
-                              }}
-                            >
-                              Cancel
-                            </button>
-                          ) : (
-                            <>
-                              <button
-                                onClick={async () => {
-                                  await api(
-                                    `scrapers/${r.scraperId}/repair`,
-                                    "POST",
-                                    { runId: r.id },
-                                  );
-                                  setSelected(r.scraperId);
-                                }}
-                              >
-                                Repair / edit
-                              </button>
-                              <a
-                                className="button"
-                                target="_blank"
-                                href={`/api/v1/runs/${r.id}/artifact`}
-                              >
-                                Screenshot
-                              </a>
-                              <button
-                                onClick={async () => {
-                                  await api(`runs/${r.id}/results`, "DELETE");
-                                  setNotice(
-                                    "Result rows and diagnostics deleted.",
-                                  );
-                                }}
-                              >
-                                Delete results
-                              </button>
-                            </>
-                          )}
-                          {r.error?.message && <small>{r.error.message}</small>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <RunsTable
+                items={items}
+                act={act}
+                refresh={() => void refresh(true)}
+                onRepair={(run) =>
+                  act(async () => {
+                    await api(`scrapers/${run.scraperId}/repair`, "POST", {
+                      runId: run.id,
+                    });
+                    setSelected(run.scraperId);
+                  })
+                }
+              />
+            ) : tab === "marketplace" ? (
+              <MarketplaceGrid
+                items={items}
+                signedIn={!!actor}
+                act={act}
+                onInstalled={setSelected}
+                onSignIn={() => setLogin(true)}
+              />
+            ) : tab === "keys" ? (
+              <KeysPanel items={items} act={act} />
+            ) : tab === "secrets" ? (
+              <SecretsPanel items={items} act={act} />
             ) : (
-              items.map((item) => (
-                <div className="panel" key={item.listing.id}>
-                  <h3>
-                    {item.listing.name} <Badge>{item.listing.status}</Badge>
-                  </h3>
-                  <p>{item.listing.description}</p>
-                  <details>
-                    <summary>Inspect definition</summary>
-                    <pre>{JSON.stringify(item.definition, null, 2)}</pre>
-                  </details>
-                  <button
-                    onClick={async () => {
-                      await api("admin/listings", "POST", {
-                        id: item.listing.id,
-                        status: "approved",
-                      });
-                      await refresh();
-                    }}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await api("admin/listings", "POST", {
-                        id: item.listing.id,
-                        status: "rejected",
-                      });
-                      await refresh();
-                    }}
-                  >
-                    Reject
-                  </button>
-                </div>
-              ))
+              <ReviewQueue items={items} act={act} />
             )}
             <footer className="page-footer">
               <span>

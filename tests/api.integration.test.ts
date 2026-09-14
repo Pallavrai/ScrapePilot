@@ -10,7 +10,8 @@ describe.skipIf(!enabled)("PostgreSQL API tenant integration", () => {
     tokenB = `test-${randomUUID()}`;
   let scraperId = "",
     versionId = "",
-    runId = "";
+    runId = "",
+    installedId = "";
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
     process.env.REDIS_PORT = process.env.TEST_REDIS_PORT ?? "56379";
@@ -67,7 +68,7 @@ describe.skipIf(!enabled)("PostgreSQL API tenant integration", () => {
       body: body ? JSON.stringify(body) : undefined,
     });
     return route[method](req, {
-      params: Promise.resolve({ path: path.split("/") }),
+      params: Promise.resolve({ path: path.split("?")[0].split("/") }),
     });
   }
   it("creates a private scraper and prevents cross-account reads and edits", async () => {
@@ -172,13 +173,17 @@ describe.skipIf(!enabled)("PostgreSQL API tenant integration", () => {
       tokenB,
     );
     expect(installed.status).toBe(201);
+    installedId = (await installed.json()).id;
     const own = await call(
-      `scrapers/${(await installed.json()).id}`,
+      `scrapers/${installedId}`,
       "GET",
       undefined,
       tokenB,
     );
     expect((await own.json()).installedVersionId).toBe(versionId);
+    const upToDate = await call(`scrapers/${installedId}/upgrade`, "GET", undefined, tokenB);
+    expect(upToDate.status).toBe(404);
+    expect((await upToDate.json()).error).toBe("You already have the latest approved version of this template.");
   });
   it("stores secrets without returning plaintext", async () => {
     expect(
@@ -192,6 +197,71 @@ describe.skipIf(!enabled)("PostgreSQL API tenant integration", () => {
     ).toBe(201);
     const r = await call("secrets");
     expect(await r.text()).not.toContain("not-in-api-response");
+  });
+  it("reports usage, last runs and run names for the dashboard", async () => {
+    const me = await (await call("me")).json();
+    expect(typeof me.usedMinutes).toBe("number");
+    const scraperList = await (await call("scrapers")).json();
+    // A local dev worker may already be running this job, so any run state is acceptable here.
+    expect(["queued", "running", "succeeded", "partial", "blocked", "failed", "canceled"]).toContain(
+      scraperList.find((s: any) => s.id === scraperId).lastRun.status,
+    );
+    const runList = await (await call("runs")).json();
+    expect(runList.find((r: any) => r.id === runId)).toMatchObject({
+      scraperName: "Integration",
+      storedRows: 0,
+      hasScreenshot: false,
+    });
+  });
+  it("exports results as CSV without spreadsheet formulas", async () => {
+    await store.db.insert(store.resultRows).values({
+      runId,
+      position: 0,
+      data: { title: '=HYPERLINK("x")', price: -5, note: 'a, "b"' },
+    });
+    const r = await call(`runs/${runId}/results?format=csv`);
+    expect(r.headers.get("content-type")).toContain("text/csv");
+    // This version has no fields, so columns follow jsonb key order (length, then name).
+    expect(await r.text()).toBe(
+      'note,price,title\r\n"a, ""b""",-5,"\'=HYPERLINK(""x"")"\r\n',
+    );
+    await store.db.delete(store.resultRows).where(store.eq(store.resultRows.runId, runId));
+  });
+  it("validates credentials and refuses duplicates", async () => {
+    expect((await call("secrets", "POST", { domain: "https://example.com/x", name: "token", value: "v" })).status).toBe(400);
+    expect((await call("secrets", "POST", { domain: "example.com", name: "1bad", value: "v" })).status).toBe(400);
+    expect((await call("secrets", "POST", { domain: "EXAMPLE.com", name: "password", value: "again" })).status).toBe(409);
+  });
+  it("refuses a run once the monthly browser quota is used up", async () => {
+    expect((await call(`scrapers/${installedId}/versions`, "POST", {}, tokenB)).status).toBe(201);
+    await store.db.update(store.user).set({ monthlyMinutes: 0 }).where(store.eq(store.user.id, b));
+    const refused = await call(`scrapers/${installedId}/runs`, "POST", { input: {} }, tokenB);
+    expect(refused.status).toBe(429);
+    expect((await refused.json()).error).toBe("Monthly browser quota exhausted");
+    expect(await store.db.select().from(store.runs).where(store.eq(store.runs.ownerId, b))).toHaveLength(0);
+  });
+  it("needs report reasons and rejection notes, and guards scraper deletion", async () => {
+    const [listing] = await store.db
+      .select()
+      .from(store.listings)
+      .where(store.eq(store.listings.versionId, versionId));
+    expect((await call(`marketplace/${listing.id}/report`, "POST", { reason: "bad" }, tokenB)).status).toBe(400);
+    expect((await call(`marketplace/${listing.id}/report`, "POST", { reason: "Collects data the site forbids" }, tokenB)).status).toBe(200);
+    const reported = (await (await call("admin/reports")).json()).find((r: any) => r.listingId === listing.id);
+    expect(reported).toMatchObject({ listingName: "Integration", reason: "Collects data the site forbids" });
+    expect((await call("admin/listings", "POST", { id: listing.id, status: "rejected" })).status).toBe(400);
+    expect((await call(`scrapers/${scraperId}`, "DELETE", undefined, tokenB)).status).toBe(404);
+    expect((await call(`scrapers/${scraperId}`, "DELETE")).status).toBe(409);
+    expect((await call("admin/listings", "POST", { id: listing.id, status: "rejected", note: "Taken down in a test" })).status).toBe(200);
+    // Deleting waits for runs to settle; a local dev worker may still be finishing this one.
+    for (const end = Date.now() + 60000; Date.now() < end; await new Promise((r) => setTimeout(r, 500)))
+      if (!["queued", "running"].includes((await (await call(`runs/${runId}`)).json()).status)) break;
+    expect((await call(`scrapers/${scraperId}`, "DELETE")).status).toBe(200);
+    expect((await call(`scrapers/${scraperId}`)).status).toBe(404);
+    expect((await call(`runs/${runId}`)).status).toBe(404);
+    const orphan = await call(`scrapers/${installedId}/upgrade`, "GET", undefined, tokenB);
+    expect(orphan.status).toBe(404);
+    expect((await orphan.json()).error).toBe("The template this scraper came from is no longer available.");
   });
   afterAll(async () => {
     if (server) {

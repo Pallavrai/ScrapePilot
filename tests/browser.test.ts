@@ -214,3 +214,29 @@ describe("collection diagnostics", () => {
     }
   }, 30000);
 });
+describe("late and lazily loaded content", () => {
+  const collect = { id: "items", type: "extractCollection" as const, container: { primary: ".product", fallbacks: [] }, fields: [{ name: "title", locator: { primary: "h2", fallbacks: [] }, source: "text" as const, type: "string" as const, trim: true, required: true }] };
+  const serve = (body: string) => async (c: any) => {
+    await c.route("https://example.com/**", (route: any) => route.fulfill({ contentType: "text/html", body }));
+  };
+  it("waits longer than five seconds for a Wait for step", async () => {
+    const d = workflow();
+    d.steps = [d.steps[0], { id: "late", type: "waitFor", locator: { primary: ".product", fallbacks: [] } }, collect];
+    d.limits.timeoutMs = 25000;
+    const r = await execute(d, { searchTerm: "x" }, {
+      prepareContext: serve(`<div id=list></div><script>setTimeout(() => document.getElementById("list").innerHTML = "<article class=product><h2>Late</h2></article>", 7000)</script>`),
+    });
+    expect(r.status, JSON.stringify(r.error)).toBe("succeeded");
+    expect(r.rows).toEqual([{ title: "Late" }]);
+  }, 30000);
+  it("keeps scrolling when new items take longer than a moment to load", async () => {
+    const d = workflow();
+    d.steps = [d.steps[0], collect, { id: "scroll", type: "paginate", mode: "scroll", maxPages: 2 }];
+    const items = (from: number) => [0, 1, 2].map((i) => `<article class=product><h2>Item ${from + i}</h2></article>`).join("");
+    const r = await execute(d, { searchTerm: "x" }, {
+      prepareContext: serve(`<div id=list>${items(1)}</div><div style="height:4000px"></div><script>let loading = false; addEventListener("scroll", () => { if (loading) return; loading = true; setTimeout(() => document.getElementById("list").insertAdjacentHTML("beforeend", ${JSON.stringify(items(4))}), 1500); });</script>`),
+    });
+    expect(r.status, JSON.stringify(r.error)).toBe("succeeded");
+    expect(r.rows.map((row) => row.title)).toEqual(["Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6"]);
+  }, 30000);
+});

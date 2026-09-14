@@ -1328,3 +1328,138 @@ th {
   display: flex;
   width: 100%;
 }
+.badge.red {
+  color: #b3392d;
+  background: #fdf3f1;
+  border-color: #f3d6d1;
+}
+.badge.amber {
+  color: #9a6b1f;
+  background: #fff8ec;
+  border-color: #f1e2c4;
+}
+.card-open,
+.card-open:hover {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+}
+.card-open:hover h3 {
+  color: var(--purple);
+}
+.icon-button {
+  padding: 5px 7px;
+}
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.card-actions .primary,
+.inline-form .primary {
+  margin-top: 0;
+}
+.meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.scraper-card .meta {
+  font-size: 10px;
+  margin: 0 0 8px;
+}
+.meta .badge {
+  margin-left: 6px;
+}
+.run-error {
+  display: block;
+  margin-top: 6px;
+  max-width: 340px;
+  color: #b3392d;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.row-actions button,
+.row-actions .button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.secret-value {
+  display: block;
+  margin: 14px 0;
+  padding: 12px;
+  background: #f7f6fb;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.results-json {
+  max-height: 55vh;
+  overflow: auto;
+  background: #fbfbfd;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  font-size: 11px;
+}
+.filter-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0;
+}
+.filter-tabs button.active {
+  border-color: var(--purple);
+  color: var(--purple);
+  background: #f6f3ff;
+}
+.panel textarea,
+.dialog-textarea {
+  width: 100%;
+  min-height: 70px;
+  margin-top: 10px;
+}
+.panel-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 12px;
+}
+.usage-track {
+  overflow: hidden;
+  border-radius: 4px;
+}
+.usage-track i {
+  display: block;
+  height: 100%;
+  background: var(--purple);
+}
+/* Tall dialogs (template diff, definitions) scroll inside the viewport so their buttons stay reachable. */
+.modal {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+}
+.diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.diff-grid pre {
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0;
+}

@@ -655,25 +655,49 @@ export default function Builder({
       }`,
     );
   }
-  function addAction(type: "fill" | "click" | "waitFor") {
-    if (!selection) return;
+  function addAction(type: "fill" | "click" | "select" | "waitFor") {
+    if (!selection || !d) return;
     if (type === "fill" && !["input", "textarea"].includes(selection.tag))
       return fail(
         `Fill needs a text box, but you selected a <${selection.tag}>. Select the input field itself.`,
       );
-    const locator = {
-      primary: selection.selector,
-      frame: selection.frame,
-      fallbacks: [],
-    };
-    add(type === "fill" ? { type, locator, value } : { type, locator });
-    say(
-      `Added "${stepNames[type]}" for ${selection.selector}${
-        selection.count > 1
-          ? ` (${selection.count} matches; the first is used)`
-          : ""
-      }. It runs when the scraper runs; to do it now, switch to Interact and use the page.`,
+    if (type === "select" && selection.tag !== "select")
+      return fail(
+        `Choose option works on dropdowns, but you selected a <${selection.tag}>. Select the dropdown itself.`,
+      );
+    if ((type === "fill" || type === "select") && !value.trim())
+      return fail(
+        type === "fill"
+          ? "Enter the text to fill in Action value."
+          : "Enter the option to choose in Action value: its value or visible label.",
+      );
+    const step = {
+      id: crypto.randomUUID(),
+      type,
+      locator: { primary: selection.selector, frame: selection.frame, fallbacks: [] },
+      ...(type === "fill" || type === "select" ? { value } : {}),
+    } as Step;
+    // Actions happen before data is collected, so they go ahead of the first collect or pagination step.
+    const at = d.steps.findIndex((s) =>
+      ["extractCollection", "followEach", "paginate"].includes(s.type),
     );
+    const steps = [...d.steps];
+    steps.splice(at < 0 ? steps.length : at, 0, step);
+    setD({ ...d, steps });
+    const where = `as step ${at < 0 ? steps.length : at + 1}`,
+      matches = selection.count > 1 ? ` (${selection.count} matches; the first is used)` : "";
+    const templated = /\{\{/.test(value);
+    if (type !== "waitFor" && connected && !(type !== "click" && templated)) {
+      send({ type: "perform", step }, true);
+      say(`Added "${stepNames[type]}" ${where}${matches}. Doing it in the browser…`);
+    } else
+      say(
+        `Added "${stepNames[type]}" ${where}${matches}.${
+          (type === "fill" || type === "select") && templated
+            ? " Values with {{…}} are filled in only during runs; to continue here, type the value in Interact mode."
+            : " It runs when the scraper runs."
+        }`,
+      );
   }
   function addNavigation() {
     if (!d) return;
@@ -1199,7 +1223,7 @@ export default function Builder({
               )}
               <p className="selected-text">{selection.text}</p>
               <label>
-                Action value (for Fill)
+                Action value (Fill and Choose option)
                 <input
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
@@ -1213,6 +1237,7 @@ export default function Builder({
                   Replace selector
                 </button>
                 <button onClick={() => addAction("fill")}>Fill input</button>
+                <button onClick={() => addAction("select")}>Choose option</button>
                 <button onClick={() => addAction("click")}>Click</button>
                 <button onClick={() => addAction("waitFor")}>Wait for</button>
                 <button

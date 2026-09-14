@@ -13,6 +13,7 @@ import {
   user,
   policies,
   webhooks,
+  webhookDeliveries,
   browserSessions,
   usageEvents,
   auditEvents,
@@ -21,6 +22,7 @@ import {
   desc,
   asc,
   sql,
+  inArray,
 } from "@scrapepilot/db";
 import {
   definitionSchema,
@@ -48,6 +50,40 @@ import {
   readBody,
 } from "../../../../lib/server";
 export const runtime = "nodejs";
+// Spreadsheet apps run text cells starting with = + - @ as formulas, so those are prefixed with '.
+const orderFields = (rows: Record<string, unknown>[], order: string[]) =>
+  rows.map((row) =>
+    Object.fromEntries([
+      ...order.filter((key) => key in row).map((key) => [key, row[key]]),
+      ...Object.entries(row).filter(([key]) => !order.includes(key)),
+    ]),
+  );
+function toCsv(rows: Record<string, unknown>[], order: string[] = []) {
+  const columns = [
+    ...new Set([...order, ...rows.flatMap((row) => Object.keys(row))]),
+  ];
+  const cell = (value: unknown) => {
+    let text =
+      value == null
+        ? ""
+        : typeof value === "object"
+          ? JSON.stringify(value)
+          : String(value);
+    if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[",\r\n]/.test(text) || text !== text.trim()
+      ? `"${text.replace(/"/g, '""')}"`
+      : text;
+  };
+  return (
+    [columns, ...rows.map((row) => columns.map((c) => row[c]))]
+      .map((line, index) =>
+        (index === 0 ? (line as string[]).map((c) => cell(c)) : line.map(cell)).join(","),
+      )
+      .join("\r\n") + "\r\n"
+  );
+}
+// Two decimals, so a few seconds of browser time does not read as zero.
+const usedMinutes = (ms: unknown) => Math.round(Number(ms) / 600) / 100;
 async function handle(
   req: Request,
   { params }: { params: Promise<{ path: string[] }> },
@@ -61,23 +97,47 @@ async function handle(
       method === "POST" || method === "PATCH" ? await readBody(req) : {};
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
-    if (resource === "me")
+    if (resource === "me") {
+      const [usage] = await db
+        .select({ ms: sql<number>`coalesce(sum(${usageEvents.durationMs}),0)` })
+        .from(usageEvents)
+        .where(
+          and(
+            eq(usageEvents.ownerId, actor.id),
+            sql`${usageEvents.createdAt} >= date_trunc('month', now())`,
+          ),
+        );
       return json({
         id: actor.id,
         name: actor.name,
         email: actor.email,
         role: actor.role,
         monthlyMinutes: actor.monthlyMinutes,
+        usedMinutes: usedMinutes(usage.ms),
       });
+    }
     if (resource === "scrapers") {
-      if (!id && method === "GET")
+      if (!id && method === "GET") {
+        const list = await db
+          .select()
+          .from(scrapers)
+          .where(eq(scrapers.ownerId, actor.id))
+          .orderBy(desc(scrapers.updatedAt));
+        const latest = await db
+          .selectDistinctOn([runs.scraperId], {
+            scraperId: runs.scraperId,
+            status: runs.status,
+            rowCount: runs.rowCount,
+            createdAt: runs.createdAt,
+          })
+          .from(runs)
+          .where(eq(runs.ownerId, actor.id))
+          .orderBy(runs.scraperId, desc(runs.createdAt));
+        const lastRuns = new Map(latest.map((r) => [r.scraperId, r]));
         return json(
-          await db
-            .select()
-            .from(scrapers)
-            .where(eq(scrapers.ownerId, actor.id))
-            .orderBy(desc(scrapers.updatedAt)),
+          list.map((s) => ({ ...s, lastRun: lastRuns.get(s.id) ?? null })),
         );
+      }
       if (!id && method === "POST") {
         const domain = new URL(body.url).hostname;
         await assertPublicUrl(body.url);
@@ -100,6 +160,57 @@ async function handle(
         .from(scrapers)
         .where(owned(scrapers, id, actor.id));
       if (!s) throw new HttpError(404, "Scraper not found");
+      if (!action && method === "DELETE") {
+        const templates = await db
+          .select({ id: listings.id, status: listings.status })
+          .from(listings)
+          .innerJoin(versions, eq(listings.versionId, versions.id))
+          .where(eq(versions.scraperId, id));
+        if (templates.some((t) => t.status === "approved"))
+          throw new HttpError(
+            409,
+            "This scraper has a public marketplace template. Ask an administrator to take it down before deleting the scraper.",
+          );
+        const [active] = await db
+          .select({ id: runs.id })
+          .from(runs)
+          .where(
+            and(
+              eq(runs.scraperId, id),
+              sql`${runs.status} in ('queued','running')`,
+            ),
+          )
+          .limit(1);
+        if (active)
+          throw new HttpError(
+            409,
+            "A run of this scraper is still in progress. Cancel it or wait for it to finish, then delete.",
+          );
+        const runIds = (
+          await db
+            .select({ id: runs.id })
+            .from(runs)
+            .where(eq(runs.scraperId, id))
+        ).map((r) => r.id);
+        await db.transaction(async (tx) => {
+          const listingIds = templates.map((t) => t.id);
+          if (listingIds.length) {
+            await tx.delete(reports).where(inArray(reports.listingId, listingIds));
+            await tx.delete(listings).where(inArray(listings.id, listingIds));
+          }
+          if (runIds.length)
+            await tx
+              .delete(webhookDeliveries)
+              .where(inArray(webhookDeliveries.runId, runIds));
+          await tx.delete(runs).where(eq(runs.scraperId, id)); // result rows cascade
+          await tx.delete(browserSessions).where(eq(browserSessions.scraperId, id));
+          await tx.delete(versions).where(eq(versions.scraperId, id));
+          await tx.delete(scrapers).where(owned(scrapers, id, actor.id));
+        });
+        const store = new LocalArtifactStore(process.env.ARTIFACT_DIR ?? "artifacts");
+        await Promise.all(runIds.map((runId) => store.delete(runId).catch(() => {})));
+        return json({ deleted: true });
+      }
       if (action === "session" && method === "DELETE") {
         await db
           .delete(browserSessions)
@@ -143,6 +254,11 @@ async function handle(
           .select()
           .from(versions)
           .where(eq(versions.id, s.installedVersionId));
+        if (!old)
+          throw new HttpError(
+            404,
+            "The template this scraper came from is no longer available.",
+          );
         const [next] = await db
           .select({ version: versions, listing: listings })
           .from(listings)
@@ -151,11 +267,16 @@ async function handle(
             and(
               eq(versions.scraperId, old.scraperId),
               eq(listings.status, "approved"),
+              sql`${versions.number} > ${old.number}`,
             ),
           )
           .orderBy(desc(versions.number))
           .limit(1);
-        if (!next) throw new HttpError(404, "No approved update");
+        if (!next)
+          throw new HttpError(
+            404,
+            "You already have the latest approved version of this template.",
+          );
         if (method === "POST") {
           if (body.versionId !== next.version.id)
             throw new HttpError(
@@ -438,15 +559,34 @@ async function handle(
       }
     }
     if (resource === "runs") {
-      if (!id)
+      if (!id) {
+        const list = await db
+          .select({ run: runs, scraperName: scrapers.name })
+          .from(runs)
+          .innerJoin(scrapers, eq(runs.scraperId, scrapers.id))
+          .where(eq(runs.ownerId, actor.id))
+          .orderBy(desc(runs.createdAt))
+          .limit(100);
+        const counts = list.length
+          ? await db
+              .select({ runId: resultRows.runId, stored: sql<number>`count(*)` })
+              .from(resultRows)
+              .where(inArray(resultRows.runId, list.map((r) => r.run.id)))
+              .groupBy(resultRows.runId)
+          : [];
+        const stored = new Map(counts.map((c) => [c.runId, Number(c.stored)]));
+        const store = new LocalArtifactStore(process.env.ARTIFACT_DIR ?? "artifacts");
         return json(
-          await db
-            .select()
-            .from(runs)
-            .where(eq(runs.ownerId, actor.id))
-            .orderBy(desc(runs.createdAt))
-            .limit(100),
+          await Promise.all(
+            list.map(async ({ run, scraperName }) => ({
+              ...run,
+              scraperName,
+              storedRows: stored.get(run.id) ?? 0,
+              hasScreenshot: await store.has(run.id, "png"),
+            })),
+          ),
         );
+      }
       const [r] = await db
         .select()
         .from(runs)
@@ -489,6 +629,35 @@ async function handle(
         return json({ canceled: true });
       }
       if (action === "results") {
+        // Rows are stored as jsonb, which reorders keys; use the field order of the version that ran.
+        const [ran] = await db
+          .select({ definition: versions.definition })
+          .from(versions)
+          .where(eq(versions.id, r.versionId));
+        const fieldOrder: string[] = ((ran?.definition as any)?.steps ?? []).flatMap(
+          (s: any) => (Array.isArray(s.fields) ? s.fields.map((f: any) => f.name) : []),
+        );
+        const format = url.searchParams.get("format");
+        if (format === "csv" || format === "json") {
+          const all = orderFields((
+            await db
+              .select({ data: resultRows.data })
+              .from(resultRows)
+              .where(eq(resultRows.runId, id))
+              .orderBy(asc(resultRows.position))
+          ).map((row) => row.data as Record<string, unknown>), fieldOrder);
+          return new Response(
+            format === "csv" ? toCsv(all, fieldOrder) : JSON.stringify(all, null, 2),
+            {
+              headers: {
+                "content-type":
+                  format === "csv" ? "text/csv; charset=utf-8" : "application/json",
+                "content-disposition": `attachment; filename="run-${id.slice(0, 8)}.${format}"`,
+                "cache-control": "private, no-store",
+              },
+            },
+          );
+        }
         const cursor = Number(url.searchParams.get("cursor") ?? 0),
           limit = Math.min(
             1000,
@@ -508,24 +677,45 @@ async function handle(
           .orderBy(asc(resultRows.position))
           .limit(limit + 1);
         return json({
-          rows: rows.slice(0, limit).map((r) => r.data),
+          rows: orderFields(
+            rows.slice(0, limit).map((row) => row.data as Record<string, unknown>),
+            fieldOrder,
+          ),
           nextCursor: rows.length > limit ? cursor + limit : null,
         });
       }
       return json(r);
     }
     if (resource === "webhooks") {
-      if (method === "GET")
+      if (method === "GET") {
+        const hooks = await db
+          .select({
+            id: webhooks.id,
+            url: webhooks.url,
+            createdAt: webhooks.createdAt,
+          })
+          .from(webhooks)
+          .where(eq(webhooks.ownerId, actor.id));
+        const deliveries = hooks.length
+          ? await db
+              .select({
+                webhookId: webhookDeliveries.webhookId,
+                runId: webhookDeliveries.runId,
+                status: webhookDeliveries.status,
+                createdAt: webhookDeliveries.createdAt,
+              })
+              .from(webhookDeliveries)
+              .where(inArray(webhookDeliveries.webhookId, hooks.map((h) => h.id)))
+              .orderBy(desc(webhookDeliveries.createdAt))
+              .limit(200)
+          : [];
         return json(
-          await db
-            .select({
-              id: webhooks.id,
-              url: webhooks.url,
-              createdAt: webhooks.createdAt,
-            })
-            .from(webhooks)
-            .where(eq(webhooks.ownerId, actor.id)),
+          hooks.map((h) => ({
+            ...h,
+            deliveries: deliveries.filter((d) => d.webhookId === h.id).slice(0, 5),
+          })),
         );
+      }
       if (method === "DELETE") {
         await db.delete(webhooks).where(owned(webhooks, id, actor.id));
         return json({ revoked: true });
@@ -591,23 +781,45 @@ async function handle(
         return json({ deleted: true });
       }
       if (method === "POST") {
-        if (
-          !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(body.name) ||
-          typeof body.value !== "string" ||
-          body.value.length > 4096
-        )
-          throw new HttpError(400, "Invalid secret");
-        await assertPublicUrl(`https://${body.domain}`);
+        const name = String(body.name ?? ""),
+          domain = /^[a-z0-9.-]+$/i.test(String(body.domain ?? ""))
+            ? String(body.domain).toLowerCase()
+            : "";
+        if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name))
+          throw new HttpError(
+            400,
+            "Credential names start with a letter and use only letters, numbers and _.",
+          );
+        if (!domain)
+          throw new HttpError(
+            400,
+            "Enter the site's domain, like example.com, without https:// or a path.",
+          );
+        if (typeof body.value !== "string" || !body.value || body.value.length > 4096)
+          throw new HttpError(400, "Enter a secret value of up to 4096 characters.");
+        await assertPublicUrl(`https://${domain}`);
+        const [existing] = await db
+          .select({ id: secrets.id })
+          .from(secrets)
+          .where(
+            and(
+              eq(secrets.ownerId, actor.id),
+              eq(secrets.domain, domain),
+              eq(secrets.name, name),
+            ),
+          );
+        if (existing)
+          throw new HttpError(
+            409,
+            `A credential named ${name} already exists for ${domain}. Revoke it first to replace it.`,
+          );
         const secretId = randomUUID();
         await db.insert(secrets).values({
           id: secretId,
           ownerId: actor.id,
-          name: body.name,
-          domain: body.domain,
-          encrypted: encrypt(
-            body.value,
-            `${actor.id}:${body.domain}:${body.name}`,
-          ),
+          name,
+          domain,
+          encrypted: encrypt(body.value, `${actor.id}:${domain}:${name}`),
         });
         return json({ id: secretId }, 201);
       }
@@ -631,7 +843,13 @@ async function handle(
             .from(listings)
             .innerJoin(versions, eq(listings.versionId, versions.id))
             .innerJoin(user, eq(listings.ownerId, user.id))
-            .where(eq(listings.status, "approved"))
+            .where(
+              and(
+                eq(listings.status, "approved"),
+                // One card per template: hide versions replaced by a newer approved one.
+                sql`not exists (select 1 from listings l2 join versions v2 on v2.id = l2.version_id where l2.status = 'approved' and v2.scraper_id = ${versions.scraperId} and v2.number > ${versions.number})`,
+              ),
+            )
             .orderBy(desc(listings.createdAt)),
         );
       if (!id && method === "POST") {
@@ -730,11 +948,17 @@ async function handle(
         return json({ id: sid }, 201);
       }
       if (action === "report" && method === "POST") {
+        const reason = String(body.reason ?? "").trim();
+        if (reason.length < 10)
+          throw new HttpError(
+            400,
+            "Describe the problem in at least 10 characters so an administrator can act on it.",
+          );
         await db.insert(reports).values({
           id: randomUUID(),
           ownerId: actor.id,
           listingId: id,
-          reason: String(body.reason).slice(0, 2000),
+          reason: reason.slice(0, 2000),
         });
         return json({ reported: true });
       }
@@ -766,8 +990,16 @@ async function handle(
       if (id === "reports" && method === "GET")
         return json(
           await db
-            .select()
+            .select({
+              id: reports.id,
+              listingId: reports.listingId,
+              reason: reports.reason,
+              createdAt: reports.createdAt,
+              listingName: listings.name,
+              listingStatus: listings.status,
+            })
             .from(reports)
+            .innerJoin(listings, eq(reports.listingId, listings.id))
             .orderBy(desc(reports.createdAt))
             .limit(100),
         );
@@ -775,14 +1007,25 @@ async function handle(
         if (method === "GET")
           return json(
             await db
-              .select({ listing: listings, definition: versions.definition })
+              .select({
+                listing: listings,
+                definition: versions.definition,
+                version: versions.number,
+                creator: user.email,
+              })
               .from(listings)
               .innerJoin(versions, eq(listings.versionId, versions.id))
+              .innerJoin(user, eq(listings.ownerId, user.id))
               .orderBy(desc(listings.createdAt)),
           );
         if (method === "POST") {
           if (!["approved", "rejected"].includes(body.status))
             throw new HttpError(400, "Invalid review status");
+          if (body.status === "rejected" && !String(body.note ?? "").trim())
+            throw new HttpError(
+              400,
+              "Add a review note explaining why the template is rejected.",
+            );
           await db
             .update(listings)
             .set({ status: body.status, reviewNote: String(body.note ?? "") })
@@ -798,16 +1041,30 @@ async function handle(
       }
       if (id === "users") {
         if (method === "GET")
-          return json(
-            await db
-              .select({
-                id: user.id,
-                email: user.email,
-                suspended: user.suspended,
-                monthlyMinutes: user.monthlyMinutes,
-              })
-              .from(user),
-          );
+        {
+          const usage = await db
+            .select({
+              ownerId: usageEvents.ownerId,
+              ms: sql<number>`coalesce(sum(${usageEvents.durationMs}),0)`,
+            })
+            .from(usageEvents)
+            .where(sql`${usageEvents.createdAt} >= date_trunc('month', now())`)
+            .groupBy(usageEvents.ownerId);
+          const used = new Map(usage.map((u) => [u.ownerId, usedMinutes(u.ms)]));
+          const people = await db
+            .select({
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              role: user.role,
+              suspended: user.suspended,
+              monthlyMinutes: user.monthlyMinutes,
+            })
+            .from(user)
+            .orderBy(user.email)
+            .limit(500);
+          return json(people.map((u) => ({ ...u, usedMinutes: used.get(u.id) ?? 0 })));
+        }
         if (method === "POST") {
           await db
             .update(user)

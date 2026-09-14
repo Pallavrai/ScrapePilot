@@ -13,7 +13,7 @@ pnpm --filter @scrapepilot/scraper-engine exec playwright install chromium
 pnpm dev
 ```
 
-In a separate terminal, run `pnpm worker`. Export environment variables into both processes (or use `node --env-file=.env` with the corresponding entrypoint). Next.js also accepts `apps/web/.env.local`; do not commit it. Local development without `BROWSER_PROXY` has DNS checks but is not the production network boundary.
+In a separate terminal, run `pnpm worker`. Export environment variables into both processes (or use `node --env-file=.env` with the corresponding entrypoint). Next.js also accepts `apps/web/.env.local`; do not commit it. Local development without `BROWSER_PROXY` has DNS checks but is not the production network boundary. Webhooks are sent by a third process, `pnpm exec tsx apps/worker/src/webhooks.ts` (the `webhooks` service in Compose); without it deliveries stay pending. Webhook receivers must be public HTTPS URLs.
 
 ## Docker deployment
 

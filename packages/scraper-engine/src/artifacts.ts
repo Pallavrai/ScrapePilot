@@ -14,6 +14,7 @@ export interface ArtifactStore {
     data: Uint8Array | string,
   ): Promise<void>;
   get(id: string, kind: "png" | "html"): Promise<Buffer>;
+  has(id: string, kind: "png" | "html"): Promise<boolean>;
   delete(id: string): Promise<void>;
   prune(before: Date): Promise<void>;
 }
@@ -30,6 +31,12 @@ export class LocalArtifactStore implements ArtifactStore {
   }
   async get(id: string, kind: "png" | "html") {
     return readFile(this.path(id, kind));
+  }
+  async has(id: string, kind: "png" | "html") {
+    return stat(this.path(id, kind)).then(
+      () => true,
+      () => false,
+    );
   }
   async delete(id: string) {
     for (const kind of ["png", "html"])

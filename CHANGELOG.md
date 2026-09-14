@@ -2,6 +2,176 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (evening) — Worker fault recovery and coverage
+
+### Causes found
+
+- **Interrupted runs:** a run left "running" by a crashed or restarted worker stayed that way for 20 minutes, then failed without settling usage. Its full reservation (up to 15 minutes) stayed charged, and no webhook delivery was recorded for it.
+- **Stuck deliveries:** a delivery whose run no longer existed stayed "pending", so reconciliation requeued it indefinitely. Pending deliveries were also requeued in no particular order.
+- **Untestable modules:** webhook delivery, reconciliation, retention and the egress proxy started queue consumers, timers or a fixed port when imported, so none of them could be tested. The plan's fault-injection coverage did not exist.
+
+### Changed
+
+- `apps/worker/src/delivery.ts` (new):
+  - Webhook sending, signing and the delivery worker, moved from `webhooks.ts`. That file is now only the process entry point, and the Compose command is unchanged.
+  - Deliveries whose webhook or run is gone are marked revoked.
+- `apps/worker/src/maintenance.ts` (new):
+  - Reconciliation and retention, moved out of `index.ts`.
+  - `failInterruptedRuns`: in one statement, it fails lost runs, charges the time they ran (capped at the reservation) and records their webhook deliveries. The worker runs it for every running run at startup (the same single-worker assumption as for leases) and, during reconciliation, for runs that started more than 20 minutes ago.
+  - Pending deliveries are requeued oldest first.
+- `apps/worker/src/egress.ts`: exports the server; the port can be set with `EGRESS_PORT` (default 3002).
+- `README.md`: local development needs a separate process for webhook delivery; `pnpm dev` and `pnpm worker` do not send webhooks.
+- `tests/worker.integration.test.ts` (new, PostgreSQL and Redis):
+  - Signatures pass the receiver check from the docs page, and a tampered body does not match. Event names follow the run status.
+  - Real BullMQ retries: a receiver failing twice is delivered on the third attempt, and one that always fails is recorded as failed.
+  - Non-HTTPS and private destinations are refused. Deliveries without a webhook or run are revoked.
+  - Reconciliation requeues pending deliveries and queued runs.
+  - Crash settlement: a run 2 minutes in is charged about 2 minutes instead of its 15-minute reservation. An hour-old run is capped at its 5-minute reservation, and settled usage is untouched. Deliveries are recorded for both.
+  - Retention removes results after 30 days and screenshots after seven.
+- `tests/egress.test.ts` (new):
+  - DNS answers with a public address first and a private one afterwards. CONNECT tunnels and plain HTTP both go to the vetted address, with DNS resolved once.
+  - Private, mixed and IPv4-mapped metadata answers, and non-443 tunnels, get 403 without connecting.
+- `tests/api.integration.test.ts`: once the monthly quota is used up, a run is refused with 429 and nothing is reserved.
+
+### Verified
+
+- `pnpm typecheck` passed; `TEST_DATABASE_URL=… pnpm test` passed 81 of 81 across 11 files.
+- The running dev worker reloaded with the startup recovery and kept serving.
+
+### Still unverified
+
+- Delivery to a real HTTPS receiver over the network; the tests replace the sender.
+- The webhook and egress processes inside Docker Compose, and Chromium traffic actually routed through the proxy.
+- BullMQ recovering a job whose worker process was killed.
+- More than one worker process.
+
+## 2026-09-14 (later) — Recorded steps, late content and the template lifecycle
+
+### Causes found
+
+- Fill, Click and Choose option steps were only written into the definition, so a login or search could not be recorded while using the site. Choose option had no button. New action steps were appended after the Collect items step, so they ran too late.
+- Wait for used the normal 5-second element wait, so pages that render later failed; the sandbox's delayed page takes about 14 seconds.
+- The Wait for notice showed the `{{…}}` "filled in only during runs" note because the Action value defaults to `{{searchTerm}}`.
+- Check template updates offered the installed version as an update when no newer version was approved.
+- The marketplace showed every approved version of a template as a separate card.
+- Tall dialogs had no maximum height and the diff had no layout, so on a normal screen Apply update was below the window and could not be clicked or scrolled to.
+- The in-app guide described an older workflow.
+
+### Changed
+
+- `packages/scraper-engine/src/index.ts`:
+  - Wait for waits up to 30 seconds for the element or any fallback to be visible, and says so when it gives up.
+  - Infinite scroll counts collection items and waits up to 5 seconds after each scroll for more to appear.
+- `apps/worker/src/index.ts`: a `perform` message does Fill, Click and Choose option in the live browser and reports "The step was recorded, but it did not work in this browser: …" when it fails.
+- `apps/web/components/builder.tsx`:
+  - Choose option button.
+  - Element checks: a select for Choose option, an input or textarea for Fill. An action value is required for both.
+  - Action steps are inserted before the first collect, detail or pagination step.
+  - Steps are done live while connected, except Wait for and values containing `{{…}}`.
+  - The `{{…}}` note appears only for Fill and Choose option.
+- `apps/web/app/api/v1/[...path]/route.ts`:
+  - Template updates only offer approved versions newer than the installed one; otherwise the response is "You already have the latest approved version of this template."
+  - The marketplace hides versions replaced by a newer approved version.
+- `apps/web/app/globals.css`: dialogs scroll within the window; the update diff shows current and proposed side by side, each scrolling.
+- `apps/web/app/docs/page.tsx`: guide rewritten. It covers collecting data, recording steps, logging in, more pages, results and repair, CSV downloads, webhook signature verification, templates and limits.
+- Tests:
+  - `tests/browser.test.ts`: a late-rendering element and items added after scrolling.
+  - `tests/api.integration.test.ts`: an up-to-date install gets the 404 message.
+
+### Verified
+
+- Builder UI on quotes.toscrape.com in Chromium, one throwaway `@example.test` account deleted afterwards:
+  - Flows 1–2, 14 of 14 checks:
+    - A login recorded while doing it, with the password from a stored credential. The run returned 10 rows with the logged-in links.
+    - A saved login session reused by a run without login steps; after Revoke the links were gone.
+  - Flows 3–5, 12 of 12 checks:
+    - A dropdown search replayed with two Choose option steps.
+    - Infinite scroll returned 30 rows from 3 pages.
+    - The delayed page returned 10 rows with Wait for.
+- Template lifecycle through the UI on books.toscrape.com, two throwaway accounts deleted afterwards, 16 of 16 checks:
+  - Version 1: submit from the editor, approve in the review queue, install on the second account; update check says it is up to date.
+  - Version 2: submit and approve; the marketplace shows one card at v2. The diff is reviewed and applied, and a run returns 5 rows with the new field.
+  - Repair: a broken selector fails with "step 2 (Collect items): No element matches …". Run history shows the failure, and Repair / edit opens that version with its error. The repaired run returns 5 rows.
+  - The installed copy has versions 1–3, and there were no page errors.
+  - The first attempt stopped at Apply update (dialog below the window); the CSS change fixed it.
+- `pnpm typecheck` and `pnpm build` passed; `TEST_DATABASE_URL=… pnpm test` 65 of 65; `/docs` renders.
+
+### Still unverified
+
+- Safari and Firefox.
+- Keyboard focus trapping in dialogs.
+- Nested frames.
+- Webhook delivery end to end.
+- Docker Compose.
+- Deployment.
+- Login and sessions only against a public sandbox.
+- The integration suites leave their `@example.test` users in the local test database.
+
+## 2026-09-14 (later) — Dashboard completeness and reliability
+
+### Causes found
+
+- Several actions had no error handling and failed silently: revoking API keys and credentials; Cancel, Repair and Delete results in Run history; Approve and Reject in the review queue.
+- The Webhooks and admin pages showed the heading "Review queue".
+- Switching tabs rendered the previous tab's rows once with the new tab's components. This caused a React key warning going from Users to Domains, and a blank-page crash reading `listing.status` going from My scrapers to Review queue. A slow response for a tab already left could also overwrite the current tab.
+- Scrapers could not be deleted, and every card said "Draft".
+- Run history dumped results into a notice, had no scraper names or auto-refresh, and linked screenshots that did not exist.
+- New API keys and webhook signing keys appeared in plain notices without a copy action, and API keys all got the same fixed name.
+- The sidebar usage meter was static.
+- Marketplace cards hid domains, inputs and sample output, and had no Report button although the API supported reports. The review queue mixed pending and decided templates and had no note field.
+- Result rows are stored as `jsonb`, which reorders keys, so previews and exports did not follow the configured field order.
+- Credentials accepted malformed domains and returned a 500 for duplicates.
+
+### Changed
+
+- `apps/web/components/dashboard.tsx` (new):
+  - Scraper cards: last-run badge, delete with confirmation.
+  - Run history: scraper name, status colors, auto-refresh while runs are active; a results dialog with Copy JSON, Download JSON and Download CSV; screenshot link only when one exists; delete results.
+  - API keys: named keys with a one-time copy dialog. Credentials: inline validation and a `{{secret.name}}` reference.
+  - Marketplace: details, Report dialog and Install. Review queue: Pending/Approved/Rejected filters and review notes.
+- `apps/web/components/settings.tsx`:
+  - Webhooks: a signing-key copy dialog and recent deliveries.
+  - Users: usage this month and an admin badge.
+  - Domain policies: validation. Abuse reports: template name and take-down confirmation.
+- `apps/web/components/workspace.tsx`:
+  - Every action goes through one helper that shows errors, and refreshes before showing a success message.
+  - Every tab has the right heading.
+  - One navigation function clears rows and reloads, including when the current tab is clicked again; slower responses for a tab already left are ignored.
+  - A real usage meter.
+- `apps/web/app/error.tsx` (new): a recovery screen with Try again and Reload instead of a blank page.
+- `apps/web/app/api/v1/[...path]/route.ts`:
+  - `GET /me` includes `usedMinutes`, and `GET /scrapers` includes `lastRun`.
+  - `DELETE /scrapers/:id` is refused while a run is active or a public template exists. Otherwise it removes versions, runs, results, saved sessions, pending or rejected templates, and screenshots.
+  - `GET /runs` includes `scraperName`, `storedRows` and `hasScreenshot`.
+  - `GET /runs/:id/results?format=csv|json` downloads all rows; CSV text cells starting with `= + - @` are prefixed with `'`. Result rows follow the field order of the version that ran.
+  - The webhook list includes recent deliveries.
+  - Credential validation, with 409 for duplicates. Reports need at least 10 characters; rejecting needs a note.
+  - Admin listings include creator and version; admin reports include template name and status; admin users include role and usage.
+  - The update check for a deleted template returns 404 instead of crashing.
+- `packages/scraper-engine/src/artifacts.ts`: `has()`.
+
+### Verified locally
+
+- `pnpm typecheck` and `pnpm build` passed. `TEST_DATABASE_URL=… pnpm test`: 63 tests passed in 9 files.
+- New API integration tests cover:
+  - usage, last runs and run names;
+  - CSV export with formula-safe cells;
+  - credential validation and duplicates;
+  - report reasons and rejection notes;
+  - deletion guards and cleanup, and a 404 for updates from a deleted template.
+- Dashboard driven in Chromium with a creator/admin and a consumer (temporary `@example.test` accounts, deleted afterwards): 44 of 44 checks, with no browser console errors.
+  - Scraper cards and deletion; run history, the results dialog, clipboard copy and CSV download; deleting results.
+  - API key creation, copy, use and revocation; credential validation, duplicates and revocation; webhook validation, signing key and revocation.
+  - Review notes and approval; the consumer's marketplace details, report and install; take-down; quotas; domain policies.
+  - Tab switching in the orders that previously crashed, and re-clicking the current tab.
+- `app/error.tsx` appeared for a temporary route that throws while rendering (route removed afterwards).
+
+### Not verified / known issues
+
+- Webhook deliveries were not exercised end to end: there was no public receiver, and the webhooks worker was not running locally.
+- Deleting a scraper keeps its usage history. Private copies installed from a deleted template keep working but can no longer check for updates.
+- Only Chromium was driven.
+
 ## 2026-09-14 (later) — Sign-in, sign-up and password reset forms
 
 Reported: validation and behavior of sign-in and account creation were not up to standard.

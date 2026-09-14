@@ -2,6 +2,12 @@ import Fastify from "fastify";
 import { leaseBrowser } from "./lease";
 import { LocalArtifactStore } from "@scrapepilot/scraper-engine/artifacts";
 import { inspect } from "./selection";
+import {
+  applyRetention,
+  deliveryJob,
+  failInterruptedRuns,
+  reconcile,
+} from "./maintenance";
 import websocket from "@fastify/websocket";
 import { Worker, Queue } from "bullmq";
 import Redis from "ioredis";
@@ -30,6 +36,7 @@ import { definitionSchema, explainDefinitionError } from "@scrapepilot/contracts
 import {
   execute,
   chromium,
+  locate,
   protectContext,
   previewCollection,
 } from "@scrapepilot/scraper-engine";
@@ -249,13 +256,7 @@ const worker = new Worker(
         await deliveryQueue.add(
           "deliver",
           { webhookId: hook.id, runId: run.id },
-          {
-            jobId: `${run.id}-${hook.id}`,
-            attempts: 4,
-            backoff: { type: "exponential", delay: 1000 },
-            removeOnComplete: 1000,
-            removeOnFail: 1000,
-          },
+          { jobId: `${run.id}-${hook.id}`, ...deliveryJob },
         );
       completed.inc({ status: result.status });
     } catch (e) {
@@ -341,6 +342,9 @@ for (const pattern of ["browser-domain:*", "browser-owner:*"]) {
     cursor = next;
   } while (cursor !== "0");
 }
+// Runs still marked running died with it too: fail them now rather than after 20 minutes,
+// charging only the time they ran.
+await failInterruptedRuns(0);
 // Sessions still marked active died with the previous process (a crash skips shutdown);
 // charge at most the time since each started instead of the whole reservation.
 await db.execute(
@@ -609,6 +613,41 @@ app.get("/browser", { websocket: true }, (socket, req) => {
             );
             send({ type: "preview", stepId: step.id, ...preview });
           }
+          // Recorded Fill, Click and Choose option steps are also done live, so a flow can be recorded as it is used.
+          if (msg.type === "perform") {
+            const step = msg.step ?? {};
+            if (!["fill", "click", "select"].includes(step.type) || typeof step.locator?.primary !== "string")
+              throw new Error("Only Fill, Click and Choose option steps can be done in the browser.");
+            try {
+              const target = (
+                await locate(page, {
+                  primary: step.locator.primary.slice(0, 1000),
+                  fallbacks: [],
+                  frame: typeof step.locator.frame === "string" ? step.locator.frame : undefined,
+                })
+              ).first();
+              const value = String(step.value ?? "").slice(0, 4096);
+              if (step.type === "fill") await target.fill(value, { timeout: 10000 });
+              if (step.type === "select") await target.selectOption(value, { timeout: 10000 });
+              if (step.type === "click") {
+                await target.click({ timeout: 10000 });
+                await page.waitForLoadState("domcontentloaded").catch(() => {});
+              }
+              send({
+                type: "notice",
+                message:
+                  step.type === "fill"
+                    ? "Recorded and filled in the browser."
+                    : step.type === "select"
+                      ? `Recorded and chose "${value}" in the browser.`
+                      : "Recorded and clicked in the browser.",
+              });
+            } catch (e) {
+              throw new Error(
+                `The step was recorded, but it did not work in this browser: ${(e as Error).message.split("\n")[0]}`,
+              );
+            }
+          }
           if (msg.type === "type") {
             if (typeof msg.text !== "string" || msg.text.length > 4096)
               throw new Error("Text too long");
@@ -682,69 +721,21 @@ app.get("/browser", { websocket: true }, (socket, req) => {
       });
   });
 });
-// Reconcile DB-backed queued jobs after a Redis outage or failed enqueue.
 const queue = new Queue("runs", { connection });
-const reconcile = setInterval(() => {
-  void (async () => {
-    await db.execute(
-      sql`update usage_events set duration_ms=0,kind='browser-expired' where kind='browser-pending' and created_at<now()-interval '90 seconds'`,
-    );
-    await db.execute(sql`delete from browser_sessions where expires_at<now()`);
-    const deliveries = await db
-      .select()
-      .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.status, "pending"))
-      .limit(100);
-    for (const delivery of deliveries)
-      await deliveryQueue.add(
-        "deliver",
-        { webhookId: delivery.webhookId, runId: delivery.runId },
-        {
-          jobId: delivery.id,
-          attempts: 4,
-          backoff: { type: "exponential", delay: 1000 },
-          removeOnComplete: 1000,
-          removeOnFail: 1000,
-        },
-      );
-    const pending = await db
-      .select()
-      .from(runs)
-      .where(eq(runs.status, "queued"))
-      .limit(100);
-    for (const run of pending)
-      await queue.add(
-        "execute",
-        { runId: run.id },
-        { jobId: run.id, removeOnComplete: 1000 },
-      );
-    await db
-      .update(runs)
-      .set({
-        status: "failed",
-        error: { message: "Worker lost during execution" },
-        finishedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(runs.status, "running"),
-          sql`${runs.startedAt}<now()-interval '20 minutes'`,
-        ),
-      );
-  })().catch((e) => app.log.error({ name: e.name }, "Reconciliation failed"));
+const reconciler = setInterval(() => {
+  reconcile(queue, deliveryQueue).catch((e) =>
+    app.log.error({ name: e.name }, "Reconciliation failed"),
+  );
 }, 30000);
 const cleanup = setInterval(() => {
-  void (async () => {
-    await db.execute(
-      sql`delete from result_rows where run_id in (select id from runs where created_at<now()-interval '30 days')`,
-    );
-    await artifactStore.prune(new Date(Date.now() - 7 * 86400000));
-  })().catch((e) => app.log.error({ name: e.name }, "Cleanup failed"));
+  applyRetention(artifactStore).catch((e) =>
+    app.log.error({ name: e.name }, "Cleanup failed"),
+  );
 }, 3600000);
 await app.listen({ port: 3001, host: "0.0.0.0" });
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, async () => {
-    clearInterval(reconcile);
+    clearInterval(reconciler);
     clearInterval(cleanup);
     // Settle open browser sessions first: recording usage and releasing leases need Redis and PostgreSQL.
     await Promise.allSettled([...sessionCleanups].map((settle) => settle()));

@@ -9,7 +9,7 @@ async function address(host: string) {
     throw new Error("Forbidden destination");
   return records[0];
 }
-const server = http.createServer(async (req, res) => {
+export const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "");
     if (
@@ -75,4 +75,4 @@ server.on("connect", async (req, client, head) => {
     client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
   }
 });
-server.listen(3002, "0.0.0.0");
+server.listen(Number(process.env.EGRESS_PORT ?? 3002), "0.0.0.0");
