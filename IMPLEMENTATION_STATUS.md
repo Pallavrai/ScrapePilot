@@ -16,6 +16,7 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed; production Next.js pages and API routes compile.
+- GitHub Actions Verify on `ubuntu-latest` (2026-09-14, pull request #2): typecheck, migrations, all tests with PostgreSQL, Redis and sandboxed Chromium, and the build passed.
 - `TEST_DATABASE_URL=... pnpm test`: 90 tests passed across eleven files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`). Without `TEST_DATABASE_URL` the three integration files are skipped, which is not a full result.
 - Fault injection (2026-09-14):
   - Webhook signatures checked the way receivers are told to check them; real BullMQ retries ending delivered or failed; refused private and non-HTTPS destinations; revoked orphan deliveries; outbox reconciliation of pending deliveries and queued runs.

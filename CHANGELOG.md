@@ -18,9 +18,12 @@ Newest first. Add an entry for every change: what changed and why, how it was ve
   - A newer push to the same branch or pull request cancels the run in progress.
   - Uses `actions/checkout@v5` and `actions/setup-node@v5`.
 
+### Verified
+
+- The pull request's Verify run passed every step on `ubuntu-latest`, including all tests with sandboxed Chromium and the build (run 34854459442, pull request #2).
+
 ### Still unverified
 
-- The pull request's CI run with these changes.
 - Dependabot's weekly npm update fails separately: inside Dependabot's environment, pnpm 12.4.1 cannot download its platform binary. No workflow change fixes that.
 
 ## 2026-09-14 (morning) — Run scrapers on your own computer
