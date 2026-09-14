@@ -8,6 +8,7 @@ The code does not contain a production database, encryption key, email provider 
 4. Register and verify the administrator's account, promote that exact account through an operator-controlled DB session, and verify normal users cannot access administration.
 5. Confirm browser connections over WSS, sandbox launch, private-network rejection, two-job resource usage, cancellation, rate limits, and retention. A Chromium sandbox failure must be fixed at the host/seccomp layer; do not disable the sandbox.
 6. Configure off-host backups below; restore into a new isolated database and verify counts before launch. Perform the authorized live target test, email verification and password reset through the actual public hostname.
+7. Fill in the operator details in `apps/web/components/legal.tsx`, including the hosting and backup providers. Have the Terms of Service, Privacy Policy and Acceptable Use Policy (`/terms`, `/privacy`, `/acceptable-use`) reviewed by a lawyer, then set `draft` to `false` before inviting users.
 
 ## Backups
 

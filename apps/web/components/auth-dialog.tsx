@@ -372,6 +372,23 @@ export default function AuthDialog({
             {...bind("confirm")}
           />
         )}
+        {signup && (
+          <p className="auth-consent">
+            By creating an account, you agree to the{" "}
+            <a href="/terms" target="_blank" rel="noreferrer">
+              Terms of Service
+            </a>{" "}
+            and{" "}
+            <a href="/acceptable-use" target="_blank" rel="noreferrer">
+              Acceptable Use Policy
+            </a>
+            , and acknowledge the{" "}
+            <a href="/privacy" target="_blank" rel="noreferrer">
+              Privacy Policy
+            </a>
+            .
+          </p>
+        )}
         <button
           className="primary"
           type="submit"

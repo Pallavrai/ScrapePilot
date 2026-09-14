@@ -197,22 +197,37 @@ export async function execute(
     beforeNavigation?: (url: string) => Promise<void>;
     blocked?: (domain: string) => Promise<boolean>;
     onFailure?: (page: Page) => Promise<void>;
+    /** Runs on the user's own computer: a browser profile folder that keeps the logins they made in it. */
+    profile?: { dir: string; headless?: boolean; channel?: string };
   } = {},
 ): Promise<ExecutionResult> {
   const d = definitionSchema.parse(definition),
     values = validateInput(d, input),
     started = Date.now(),
     secret = options.secrets ?? {};
-  const browser = await chromium.launch({
-    chromiumSandbox: true,
-    headless: true,
-    proxy: options.proxy ? { server: options.proxy } : undefined,
-  });
-  const context = await browser.newContext({
-    serviceWorkers: "block",
-    acceptDownloads: false,
-    storageState: options.storageState,
-  });
+  let context: BrowserContext;
+  if (options.profile)
+    context = await chromium.launchPersistentContext(options.profile.dir, {
+      chromiumSandbox: true,
+      headless: options.profile.headless ?? true,
+      channel: options.profile.channel,
+      serviceWorkers: "block",
+      acceptDownloads: false,
+    });
+  else
+    context = await (
+      await chromium.launch({
+        chromiumSandbox: true,
+        headless: true,
+        proxy: options.proxy ? { server: options.proxy } : undefined,
+      })
+    ).newContext({
+      serviceWorkers: "block",
+      acceptDownloads: false,
+      storageState: options.storageState,
+    });
+  // A profile's context owns its browser; otherwise close the whole browser.
+  const close = () => (context.browser() ?? context).close();
   await protectContext(
     context,
     d.allowedDomains,
@@ -237,9 +252,9 @@ export async function execute(
   });
   const timeout = setTimeout(() => {
     timedOut = true;
-    void browser.close();
+    void close();
   }, d.limits.timeoutMs);
-  const cancel = () => void browser.close();
+  const cancel = () => void close();
   options.signal?.addEventListener("abort", cancel, { once: true });
   const check = () => {
     if (navigationBlock) throw new BlockedError(navigationBlock);
@@ -480,6 +495,6 @@ export async function execute(
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", cancel);
-    await browser.close();
+    await close();
   }
 }

@@ -115,6 +115,32 @@ const valid =
         site at a time. Results are kept for 30 days and failure screenshots
         for seven.
       </p>
+
+      <h2>Run on your computer</h2>
+      <p>
+        Download for your computer saves the scraper&apos;s latest saved
+        version as scraper.mjs. It runs on your own computer, with your own
+        internet connection and a browser profile you sign in to yourself. It
+        keeps ScrapePilot&apos;s pacing of one page load per second, stops at
+        CAPTCHA checks, and saves results to a JSON file. The login stays in the
+        scrapepilot-profile folder: keep it private, and delete it to sign out.
+        The Terms, the Acceptable Use Policy and each site&apos;s own rules still
+        apply.
+      </p>
+      <pre>{`npm install playwright@1.63.0
+npx playwright install chromium
+node scraper.mjs --login      # sign in once in the window that opens
+node scraper.mjs              # add --headless to hide the window
+SCRAPER_CHANNEL=chrome node scraper.mjs --login   # use your installed Chrome`}</pre>
+
+      <h2>Terms and policies</h2>
+      <p>
+        Using ScrapePilot means agreeing to the{" "}
+        <a href="/terms">Terms of Service</a> and the{" "}
+        <a href="/acceptable-use">Acceptable Use Policy</a>. The{" "}
+        <a href="/privacy">Privacy Policy</a> explains how personal data is
+        handled.
+      </p>
     </main>
   );
 }

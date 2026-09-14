@@ -241,6 +241,11 @@ export default function Workspace() {
             </div>
             <span>Usage is enforced on every run</span>
           </div>
+          <nav className="legal-links" aria-label="Terms and policies">
+            <a href="/terms">Terms</a>
+            <a href="/privacy">Privacy</a>
+            <a href="/acceptable-use">Acceptable use</a>
+          </nav>
           <button
             className="profile"
             onClick={() =>

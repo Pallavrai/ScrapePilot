@@ -377,7 +377,7 @@ async function handle(
           {
             headers: {
               "content-type": "text/plain",
-              "content-disposition": 'attachment; filename="scraper.ts"',
+              "content-disposition": 'attachment; filename="scraper.mjs"',
             },
           },
         );

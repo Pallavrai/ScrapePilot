@@ -2,6 +2,85 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (morning) — Run scrapers on your own computer
+
+### Why
+
+- Users want to run scrapers with their own internet connection and their own logins, for example to analyse their own accounts, instead of from ScrapePilot's servers.
+- The downloaded TypeScript export could not run at all. The runner code was pasted after the bundled engine and redeclared `input`, so Node refused to parse the file. The test only searched the file's text.
+
+### Changed
+
+- `packages/scraper-engine/src/index.ts`: `execute` accepts a `profile`, which is a browser profile folder, optionally used with the installed Chrome. Such runs use a persistent browser that keeps logins made in it. Server runs are unchanged.
+- `packages/scraper-engine/src/export.ts`: the runner is bundled with the engine through esbuild, so names cannot clash. The downloaded `scraper.mjs` works as follows:
+  - `--login` opens a visible browser at the scraper's first page. The user signs in and presses Enter, and the login stays in `scrapepilot-profile`.
+  - Runs reuse that profile in a visible window; `--headless` hides it.
+  - Runs wait at least one second between page loads and stop at CAPTCHA and block responses, like server runs. Rows are saved to `results-<time>.json`.
+  - `SCRAPER_CHANNEL=chrome` uses the installed Google Chrome, and `SCRAPER_PROFILE` moves the profile folder.
+- Editor: the button is now "Download for your computer" and saves `scraper.mjs`; the API serves the same file name.
+- Guide: a "Run on your computer" section.
+- Privacy Policy: scrapers run on a user's computer send nothing back to ScrapePilot.
+- Tests:
+  - A login cookie persists between two runs that share a profile.
+  - The export contains the local-run options and passes `node --check`.
+
+### Verified
+
+- `pnpm typecheck` passed; `TEST_DATABASE_URL=… pnpm test` passed 90 of 90; the export tests passed 2 of 2 after the bundling fix.
+- A scraper exported for books.toscrape.com ran on this Mac, headless with a new profile, and succeeded with 5 rows saved to a results file.
+- The editor's UI check of pagination and detail pages passed 11 of 11, confirming server runs after the engine change.
+- The guide and Privacy Policy pages render the new text.
+
+### Still unverified
+
+- `--login` with a real person signing in, and `SCRAPER_CHANNEL=chrome`.
+- Windows and Linux desktops.
+- Sites that tie logins to a device or challenge automated browsers.
+- Whether a given site's terms allow automation; the Acceptable Use Policy still applies.
+
+## 2026-09-14 (early morning) — Draft Terms, Privacy Policy and Acceptable Use Policy
+
+### Why
+
+A market test needs terms of service, a privacy policy and an acceptable use policy. The app had none, and sign-up did not refer to any terms.
+
+### Changed
+
+- `apps/web/components/legal.tsx` (new):
+  - Operator placeholders: legal name, address, contact email, effective date, governing law, courts, and hosting and backup providers.
+  - A shared page layout that shows a draft notice while `draft` is `true`.
+- `apps/web/app/terms/page.tsx`, `apps/web/app/privacy/page.tsx` and `apps/web/app/acceptable-use/page.tsx` (new), drafted from what the product actually does:
+  - **Terms of Service:**
+    - the free beta and its limits, account duties, and ownership of content with responsibility for scraped data
+    - stored logins, the template license, API and webhooks
+    - suspension, fees, disclaimers, a liability cap placeholder, indemnity, changes and governing law
+  - **Privacy Policy:**
+    - the data stored, including each sign-in session's IP address and user agent, and encrypted logins
+    - retention: results 30 days; screenshots, saved sessions and idle sign-in sessions 7 days
+    - service providers: hosting and backup placeholders, Resend, Google Fonts
+    - sharing, security, user rights, sign-in-only cookies, and children
+  - **Acceptable Use Policy:**
+    - automate only sites you may; no bypassing CAPTCHAs or other access controls; limits on personal and sensitive data
+    - template rules, including the robots.txt refusal
+    - reporting abuse, domain blocks and enforcement
+- `apps/web/components/auth-dialog.tsx`: sign-up states that creating an account accepts the Terms and Acceptable Use Policy and acknowledges the Privacy Policy. The links open in a new tab.
+- `apps/web/components/workspace.tsx` and `apps/web/app/docs/page.tsx`: links to the three documents in the sidebar and the guide.
+- `apps/web/app/globals.css`: styles for the legal pages and their links. The links override the global column layout of `nav`.
+- `DEPLOYMENT.md`: step 7 — fill in the operator details, have the documents reviewed, and set `draft` to `false` before inviting users.
+
+### Verified
+
+- `pnpm typecheck` passed.
+- `/terms`, `/privacy` and `/acceptable-use` return 200 with their titles and the draft notice.
+- The Terms page and the sign-up consent line were checked in the Browser pane.
+- The sign-in and sign-up UI checks passed 27 of 27.
+
+### Still unverified
+
+- **Legal review:** the documents are drafts, not legal advice, and they contain placeholders.
+- **Operator choices:** hosting and backup providers, log and backup retention, and international transfers depend on the deployment.
+- **Google Fonts:** pages load fonts from Google, which sends visitors' IP addresses there. Self-hosting the fonts would remove that disclosure.
+
 ## 2026-09-14 (overnight) — Single-page-app pagination, blocks and duplicates
 
 ### Causes found

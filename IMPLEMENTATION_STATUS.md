@@ -7,7 +7,7 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 - pnpm monorepo, Next.js dashboard and three-panel visual builder, drag-to-reorder workflow steps, remote Chromium screencast with authenticated single-use sessions, interaction/selection modes and selection through nested iframes.
 - Better Auth verified-email signup, password reset, private tenant-scoped resources, hashed API keys, administrator suspension and configurable monthly quotas.
 - Versioned contracts and immutable scraper versions; input interpolation, collection/detail extraction, next-page/infinite-scroll pagination, typed and RE2 regex transforms, JSON results, repair drafts, selector replacement and explicit template upgrade diffs.
-- BullMQ runs, usage reservations, cancellation, failure artifacts, portable engine export, encrypted domain-bound secrets and seven-day browser sessions.
+- BullMQ runs, usage reservations, cancellation, failure artifacts, a downloadable scraper that runs on the user's computer with their own browser profile, encrypted domain-bound secrets and seven-day browser sessions.
 - Marketplace submission validation, administrator review, private pinned installation, metadata, reports, domain blocks and audit records.
 - Sandboxed non-root Chromium, restricted Docker egress proxy, public-IP/DNS validation, signed bounded-retry webhooks with PostgreSQL delivery records and queue reconciliation, retention, metrics, backup/restore scripts.
 - Four Drizzle migrations (18 tables), Docker Compose and CI with PostgreSQL, Redis and Chromium installation.
@@ -16,7 +16,7 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
 
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed; production Next.js pages and API routes compile.
-- `TEST_DATABASE_URL=... pnpm test`: 88 tests passed across eleven files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`). Without `TEST_DATABASE_URL` the three integration files are skipped, which is not a full result.
+- `TEST_DATABASE_URL=... pnpm test`: 90 tests passed across eleven files using PostgreSQL 18.6, Redis 8.10.1 and real Chromium (2026-09-14, after the changes in `CHANGELOG.md`). Without `TEST_DATABASE_URL` the three integration files are skipped, which is not a full result.
 - Fault injection (2026-09-14):
   - Webhook signatures checked the way receivers are told to check them; real BullMQ retries ending delivered or failed; refused private and non-HTTPS destinations; revoked orphan deliveries; outbox reconciliation of pending deliveries and queued runs.
   - Crashed-run usage settlement; the 429 quota refusal; result and screenshot retention.
@@ -59,17 +59,17 @@ Updated 2026-09-14. The repository contains a working implementation, but the co
    - BullMQ re-running a job after its worker process was killed.
 4. Compose starts and passes the smoke test locally on Docker Desktop (arm64) with a local certificate. Repeat it on the Linux VPS with the real domain, certificate and email.
 5. Measure two concurrent runs on the intended VPS, including browser memory reserve, queue/stream latency and cancellation. Actual click-driven navigation accounting and adaptive SPA pagination need further acceptance coverage.
-6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
+6. Configure the operator's domain, TLS, email sender, keys and off-host backup destination. Fill in the operator details in `apps/web/components/legal.tsx` and have the draft Terms, Privacy Policy and Acceptable Use Policy reviewed. Rehearse backup restoration into a new database and perform one owned/authorized live-site smoke test over deployed HTTPS/WSS.
 7. Startup lease cleanup and crash usage settlement assume a single worker process; key leases by worker id before running more than one. A crashed session is charged until the worker starts again, capped at its reservation.
 
 ## Roadmap (2026-09-14)
 
-Done: dashboard completeness and reliability; editor features and the template lifecycle; worker fault recovery and coverage; local Docker Compose verification; dialog focus, nested frames and test cleanup; single-page-app pagination with block and duplicate fixtures (see `CHANGELOG.md`).
+Done: dashboard completeness and reliability; editor features and the template lifecycle; worker fault recovery and coverage; local Docker Compose verification; dialog focus, nested frames and test cleanup; single-page-app pagination with block and duplicate fixtures; draft Terms, Privacy and Acceptable Use pages; local runs with the user's own browser profile (see `CHANGELOG.md`).
 
 Next, in order:
 
 1. Decide whether runs should report diagnostics: duplicate rows skipped, and a row count far below the previous run. Neither exists yet.
-2. Operator only: VPS capacity measurement, domain and TLS, a Resend sending domain, off-host backups with a restore rehearsal, and a live HTTPS/WSS smoke test.
+2. Operator only: VPS capacity measurement, domain and TLS, a Resend sending domain, off-host backups with a restore rehearsal, a live HTTPS/WSS smoke test, and legal review of the draft Terms, Privacy Policy and Acceptable Use Policy.
 
 ## Local continuation
 

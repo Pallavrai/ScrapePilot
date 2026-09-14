@@ -841,16 +841,18 @@ export default function Builder({
         const error = (await r.json().catch(() => ({}))).error;
         throw new Error(
           error === "Save a version first"
-            ? "Run the scraper once (that saves a version) before exporting."
-            : (error ?? `Export failed (HTTP ${r.status})`),
+            ? "Run the scraper once (that saves a version) before downloading it."
+            : (error ?? `Download failed (HTTP ${r.status})`),
         );
       }
       const link = document.createElement("a");
       link.href = URL.createObjectURL(await r.blob());
-      link.download = "scraper.ts";
+      link.download = "scraper.mjs";
       link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      say("Exported the latest saved version as scraper.ts.");
+      say(
+        "Downloaded scraper.mjs. It runs on your computer with your own connection and logins; see Run on your computer in the guide.",
+      );
     } catch (e) {
       fail(e);
     }
@@ -1355,7 +1357,7 @@ export default function Builder({
               <Upload size={15} /> Submit template
             </button>
             <button onClick={exportScript}>
-              <Download size={15} /> Export TypeScript
+              <Download size={15} /> Download for your computer
             </button>
           </div>
         </section>

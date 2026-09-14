@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execute } from "../packages/scraper-engine/src/index";
 import { definitionSchema } from "../packages/contracts/src/index";
 const workflow = () =>
@@ -154,6 +157,32 @@ describe("real Chromium execution", () => {
     expect(r.status).toBe("succeeded");
     expect(r.rows.map((row) => row.title)).toEqual(["Product 1", "Product 2"]);
   }, 30000);
+  it("keeps a login between local runs that share a browser profile", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "scrapepilot-profile-"));
+    const d = workflow();
+    d.steps = d.steps.filter((s) => ["open", "cards"].includes(s.id));
+    // The first visit signs in by setting a cookie; the page shows whether that cookie was already there.
+    const body = `<script>const signedIn = document.cookie.includes("session=yes"); document.cookie = "session=yes; max-age=3600; path=/";</script><article class=product><h2 id=who></h2><span class=price>$1</span><a href=/me>Me</a></article><script>document.querySelector("#who").textContent = signedIn ? "Signed in" : "Signed out";</script>`;
+    const run = () =>
+      execute(
+        d,
+        { searchTerm: "test" },
+        {
+          profile: { dir },
+          prepareContext: async (c) => {
+            await c.route("https://example.com/**", (route) =>
+              route.fulfill({ contentType: "text/html", body }),
+            );
+          },
+        },
+      );
+    try {
+      expect((await run()).rows.map((row) => row.title)).toEqual(["Signed out"]);
+      expect((await run()).rows.map((row) => row.title)).toEqual(["Signed in"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60000);
   it("collects items two iframes deep through a frame chain", async () => {
     const d = workflow();
     d.steps = d.steps.filter((s) => ["open", "cards"].includes(s.id));
