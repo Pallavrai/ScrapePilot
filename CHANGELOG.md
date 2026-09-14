@@ -2,6 +2,27 @@
 
 Newest first. Add an entry for every change: what changed and why, how it was verified, and what is still unverified. Read it with `IMPLEMENTATION_STATUS.md` before continuing work.
 
+## 2026-09-14 (afternoon) — GitHub Actions: Chromium sandbox and duplicate runs
+
+### Causes found
+
+- **Every Verify run failed in `pnpm test`,** from the first run on 2026-09-13. Ubuntu 24.04 runners block the unprivileged user namespaces that Chromium's sandbox needs ("No usable sandbox!"). The engine launches Chromium with `chromiumSandbox: true`, so the browser tests could not start; the other 10 test files passed.
+- **Duplicate runs:** the workflow ran on every push and every pull request, so a branch with an open pull request ran twice and sent two failure emails.
+- **Deprecated actions:** `actions/checkout@v4` and `actions/setup-node@v4` target Node 20, which GitHub now warns about.
+
+### Changed
+
+- `.github/workflows/ci.yml`:
+  - Allows unprivileged user namespaces on the runner (`kernel.apparmor_restrict_unprivileged_userns=0`) before the tests. The sandbox stays on in the code.
+  - Runs on pushes to `main`, on pull requests and on demand.
+  - A newer push to the same branch or pull request cancels the run in progress.
+  - Uses `actions/checkout@v5` and `actions/setup-node@v5`.
+
+### Still unverified
+
+- The pull request's CI run with these changes.
+- Dependabot's weekly npm update fails separately: inside Dependabot's environment, pnpm 12.4.1 cannot download its platform binary. No workflow change fixes that.
+
 ## 2026-09-14 (morning) — Run scrapers on your own computer
 
 ### Why

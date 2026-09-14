@@ -1,5 +1,13 @@
 name: Verify
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -19,13 +27,19 @@ jobs:
       DATABASE_URL: postgres://scrapepilot:ci-only-password@localhost:5432/scrapepilot
       TEST_DATABASE_URL: postgres://scrapepilot:ci-only-password@localhost:5432/scrapepilot
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 24 }
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
       - run: npm install -g pnpm@12.4.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm db:migrate
       - run: pnpm --filter @scrapepilot/scraper-engine exec playwright install --with-deps chromium
+      # Ubuntu 24.04 runners block the user namespaces Chromium's sandbox needs. The engine keeps the
+      # sandbox on (chromiumSandbox: true), so allow namespaces on the runner instead of disabling it.
+      - name: Allow Chromium's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm test
       - run: pnpm build
