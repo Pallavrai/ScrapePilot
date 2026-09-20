@@ -13,7 +13,7 @@
     "@scrapepilot/scraper-engine": "workspace:*",
     "fastify": "5.12.4",
     "@fastify/websocket": "11.3.0",
-    "bullmq": "6.3.4",
+    "bullmq": "6.3.6",
     "ioredis": "6.0.0",
     "pino": "10.3.1",
     "prom-client": "15.1.3",
