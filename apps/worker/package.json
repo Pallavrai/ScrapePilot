@@ -11,7 +11,7 @@
     "@scrapepilot/contracts": "workspace:*",
     "@scrapepilot/db": "workspace:*",
     "@scrapepilot/scraper-engine": "workspace:*",
-    "fastify": "5.12.4",
+    "fastify": "5.12.5",
     "@fastify/websocket": "11.3.0",
     "bullmq": "6.3.4",
     "ioredis": "6.0.0",
